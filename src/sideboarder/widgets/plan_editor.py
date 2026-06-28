@@ -9,6 +9,7 @@ from textual.widgets import Button, DataTable, Label, RadioButton, RadioSet
 
 from ..models import Archetype, CardEntry, Plan, merge_entries, validate_plan
 from ..screens.dialogs import CardEntryScreen
+from .deck_pane import DeckPane
 
 LAYER_BASE, LAYER_PLAY, LAYER_DRAW = "base", "play", "draw"
 _LAYER_BY_INDEX = [LAYER_BASE, LAYER_PLAY, LAYER_DRAW]
@@ -58,6 +59,7 @@ class PlanEditor(Vertical):
     def load(self, arch: Archetype | None) -> None:
         self._arch = arch
         self._refresh_view()
+        self._refresh_deck_pane()
 
     def refresh_summary(self) -> None:
         self._render_summary()
@@ -74,6 +76,30 @@ class PlanEditor(Vertical):
             plan = Plan()
             setattr(self._arch, attr, plan)
         return plan
+
+    def active_allocations(self) -> tuple[dict[str, int], dict[str, int]]:
+        """OUT/IN quantities (keyed by casefolded name) for the layer on screen.
+
+        Used by the deck pane to show how much of each card is still available
+        for the current matchup. Reflects the layer currently displayed, so the
+        deck counts track what's visible in the editor.
+        """
+        out: dict[str, int] = {}
+        in_: dict[str, int] = {}
+        plan = self._current_plan()
+        if plan is not None:
+            for e in plan.out:
+                out[e.name.casefold()] = out.get(e.name.casefold(), 0) + e.qty
+            for e in plan.in_:
+                in_[e.name.casefold()] = in_.get(e.name.casefold(), 0) + e.qty
+        return out, in_
+
+    def _refresh_deck_pane(self) -> None:
+        """Re-render the deck pane so 'remaining' counts track the active plan."""
+        try:
+            self.screen.query_one(DeckPane).refresh_deck()
+        except Exception:  # noqa: BLE001 - deck pane not mounted yet
+            pass
 
     def _focused_list(self) -> tuple[str, list[CardEntry]] | None:
         """Return ('out'|'in', entry list) for the focused table, or None."""
@@ -136,6 +162,7 @@ class PlanEditor(Vertical):
     def _layer_changed(self, event: RadioSet.Changed) -> None:
         self._layer = _LAYER_BY_INDEX[event.index]
         self._refresh_view()
+        self._refresh_deck_pane()
 
     @on(Button.Pressed, "#add-out")
     def _add_out(self) -> None:
@@ -152,9 +179,32 @@ class PlanEditor(Vertical):
         if which == "out":
             candidates = [e.name for e in deck.mainboard]
             title = "Take OUT (from mainboard)"
+            board = "main"
         else:
             candidates = [e.name for e in deck.sideboard]
             title = "Bring IN (from sideboard)"
+            board = "side"
+
+        # Prefill with the highlighted card in the deck pane (mainboard for OUT,
+        # sideboard for IN) so the common case is one click + Enter.
+        prefill = ""
+        try:
+            deck_pane = self.screen.query_one(DeckPane)
+            prefill = deck_pane.highlighted_name(board) or ""
+        except Exception:  # noqa: BLE001 - deck pane not mounted yet
+            prefill = ""
+        if prefill not in candidates:
+            prefill = ""
+
+        # Prefill the quantity with however much of that card is still available
+        # for this matchup (deck total minus what's already in this plan layer).
+        prefill_qty = 1
+        if prefill:
+            board_entries = deck.mainboard if which == "out" else deck.sideboard
+            total = sum(e.qty for e in board_entries if e.name.casefold() == prefill.casefold())
+            out_alloc, in_alloc = self.active_allocations()
+            allocated = (out_alloc if which == "out" else in_alloc).get(prefill.casefold(), 0)
+            prefill_qty = max(0, total - allocated) or 1
 
         def got(entry: CardEntry | None) -> None:
             if entry is None:
@@ -166,7 +216,9 @@ class PlanEditor(Vertical):
             target.extend(merged)
             self._changed()
 
-        self.app.push_screen(CardEntryScreen(title, candidates), got)
+        self.app.push_screen(
+            CardEntryScreen(title, candidates, name=prefill, qty=prefill_qty), got
+        )
 
     def action_remove(self) -> None:
         found = self._focused_list()

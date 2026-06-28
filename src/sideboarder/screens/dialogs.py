@@ -76,6 +76,36 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class SaveChangesScreen(ModalScreen[str]):
+    """Prompt on exit with unsaved changes. Dismisses 'save' / 'discard' / 'cancel'."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, message: str = "You have unsaved changes.") -> None:
+        super().__init__()
+        self._message = message
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Label(self._message, classes="dialog-title")
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Save", variant="primary", id="save")
+                yield Button("Discard", variant="error", id="discard")
+                yield Button("Cancel", id="cancel")
+
+    @on(Button.Pressed, "#save")
+    def _save(self) -> None:
+        self.dismiss("save")
+
+    @on(Button.Pressed, "#discard")
+    def _discard(self) -> None:
+        self.dismiss("discard")
+
+    @on(Button.Pressed, "#cancel")
+    def action_cancel(self) -> None:
+        self.dismiss("cancel")
+
+
 class CardEntryScreen(ModalScreen[CardEntry | None]):
     """Pick a card name (with autocomplete) and a quantity."""
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -12,7 +13,8 @@ from textual.widgets import Button, Static
 from .carddb import CardDatabase
 from .config import AppSettings
 from .models import Archetype, SideboardDocument
-from .screens.dialogs import ConfirmScreen, PromptScreen
+from .screens.dialogs import ConfirmScreen, PromptScreen, SaveChangesScreen
+from .screens.file_dialog import FileDialog
 from .screens.import_screen import ImportScreen
 from .screens.main_screen import MainScreen
 from .screens.report_screen import ReportScreen
@@ -107,8 +109,11 @@ class SideboarderApp(App):
     def on_mount(self) -> None:
         self.carddb.load()
         self.push_screen(self.main_screen)
-        if self._initial_path:
-            self._load_path(self._initial_path)
+        startup_path = self._initial_path or self.settings.last_file
+        if startup_path and Path(startup_path).expanduser().is_file():
+            # Defer until the main screen's widgets are mounted (_load_path
+            # refreshes the archetype list / deck tables).
+            self.call_after_refresh(self._load_path, startup_path)
         self.refresh_title()
 
     # ----- shared state helpers -------------------------------------------
@@ -179,8 +184,11 @@ class SideboarderApp(App):
                 return
             self._load_path(path)
 
-        start = self.settings.default_save_dir or str(Path.cwd())
-        self.push_screen(PromptScreen("Open file:", value=str(Path(start) / "")), got)
+        if self.current_path:
+            start = str(Path(self.current_path).expanduser().parent)
+        else:
+            start = self.settings.default_save_dir or str(Path.cwd())
+        self.push_screen(FileDialog(start, title="Open file"), got)
 
     def _load_path(self, path: str) -> None:
         try:
@@ -190,10 +198,20 @@ class SideboarderApp(App):
             return
         self.current_path = str(Path(path).expanduser())
         self.dirty = False
+        self._remember_last_file(self.current_path)
         self.main_screen.refresh_archetypes()
         self.main_screen.refresh_deck()
         self.refresh_title()
         self.notify(f"Opened {Path(path).name}")
+
+    def _remember_last_file(self, path: str) -> None:
+        if self.settings.last_file == path:
+            return
+        self.settings.last_file = path
+        try:
+            self.settings.save()
+        except OSError:
+            pass  # non-fatal: just won't auto-open next time
 
     def action_save(self) -> None:
         if self.current_path:
@@ -201,16 +219,27 @@ class SideboarderApp(App):
         else:
             self._save_as()
 
-    def _save_as(self) -> None:
+    def _save_as(self, after: Callable[[], None] | None = None) -> None:
         base = self.settings.default_save_dir or str(Path.cwd())
         default = str(Path(base) / default_filename(self.document.deck.name))
 
         def got(path: str | None) -> None:
             if not path:
-                return
+                return  # save-as cancelled: stay put, run no callback
             self._write(path)
+            if after is not None and not self.dirty:
+                after()
 
         self.push_screen(PromptScreen("Save as:", value=default), got)
+
+    def _save_then(self, after: Callable[[], None]) -> None:
+        """Save (prompting for a path if needed); run ``after`` only on success."""
+        if self.current_path:
+            self._write(self.current_path)
+            if not self.dirty:  # _write clears dirty on success
+                after()
+        else:
+            self._save_as(after)
 
     def _write(self, path: str) -> None:
         try:
@@ -220,6 +249,7 @@ class SideboarderApp(App):
             return
         self.current_path = str(saved)
         self.dirty = False
+        self._remember_last_file(self.current_path)
         self.refresh_title()
         self.notify(f"Saved {saved.name}")
 
@@ -237,8 +267,11 @@ class SideboarderApp(App):
             self.exit()
             return
 
-        def got(confirmed: bool) -> None:
-            if confirmed:
+        def got(choice: str) -> None:
+            if choice == "save":
+                self._save_then(self.exit)
+            elif choice == "discard":
                 self.exit()
+            # "cancel" -> stay in the app
 
-        self.push_screen(ConfirmScreen("Discard unsaved changes and quit?"), got)
+        self.push_screen(SaveChangesScreen("Save changes before quitting?"), got)

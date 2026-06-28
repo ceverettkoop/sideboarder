@@ -23,6 +23,7 @@ class AppSettings:
 
     card_source: str = "mtgjson"  # "mtgjson" | "scryfall"
     default_save_dir: str = ""
+    last_file: str = ""  # path of the most recently opened/saved document
     cardnames_updated: str = ""  # ISO timestamp of last card DB update
     cardnames_count: int = 0
 

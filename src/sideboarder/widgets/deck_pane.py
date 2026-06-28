@@ -44,11 +44,29 @@ class DeckPane(Vertical):
         deck = self.app.document.deck
         self.query_one("#main-label", Label).update(f"Mainboard ({deck.mainboard_count()})")
         self.query_one("#side-label", Label).update(f"Sideboard ({deck.sideboard_count()})")
-        for tid, entries in (("#main-table", deck.mainboard), ("#side-table", deck.sideboard)):
+        # Show quantity still available for the selected matchup: deck total minus
+        # what the active plan layer has already pulled (OUT for the mainboard,
+        # IN for the sideboard). Underlying deck data is untouched.
+        out_alloc, in_alloc = self._plan_allocations()
+        for tid, entries, alloc in (
+            ("#main-table", deck.mainboard, out_alloc),
+            ("#side-table", deck.sideboard, in_alloc),
+        ):
             table = self.query_one(tid, DataTable)
             table.clear()
             for e in entries:
-                table.add_row(str(e.qty), e.name, key=e.name)
+                remaining = max(0, e.qty - alloc.get(e.name.casefold(), 0))
+                table.add_row(str(remaining), e.name, key=e.name)
+
+    def _plan_allocations(self) -> tuple[dict[str, int], dict[str, int]]:
+        """(OUT, IN) quantities reserved by the active matchup plan, by name."""
+        # Imported lazily: plan_editor imports this module at load time.
+        from .plan_editor import PlanEditor
+
+        try:
+            return self.screen.query_one(PlanEditor).active_allocations()
+        except Exception:  # noqa: BLE001 - plan editor not mounted / no screen
+            return {}, {}
 
     def _board_for_focus(self) -> tuple[str, list[CardEntry]] | None:
         deck = self.app.document.deck
@@ -68,6 +86,10 @@ class DeckPane(Vertical):
         except Exception:  # noqa: BLE001
             return None
         return row_key.value
+
+    def highlighted_name(self, which: str) -> str | None:
+        """Card under the cursor in the "main"/"side" table (focus-independent)."""
+        return self._selected_name(which)
 
     def _candidates(self):
         return lambda text: self.app.carddb.autocomplete(text)
