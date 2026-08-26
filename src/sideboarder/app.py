@@ -187,7 +187,7 @@ class SideboarderApp(App):
         if self.current_path:
             start = str(Path(self.current_path).expanduser().parent)
         else:
-            start = self.settings.default_save_dir or str(Path.cwd())
+            start = self.settings.default_save_dir or str(Path.cwd() / "saves")
         self.push_screen(FileDialog(start, title="Open file"), got)
 
     def _load_path(self, path: str) -> None:
@@ -220,7 +220,7 @@ class SideboarderApp(App):
             self._save_as()
 
     def _save_as(self, after: Callable[[], None] | None = None) -> None:
-        base = self.settings.default_save_dir or str(Path.cwd())
+        base = self.settings.default_save_dir or str(Path.cwd() / "saves")
         default = str(Path(base) / default_filename(self.document.deck.name))
 
         def got(path: str | None) -> None:
