@@ -10,6 +10,7 @@ Everything serializes to/from plain dicts (stdlib ``json``).
 
 from __future__ import annotations
 
+import datetime
 import uuid
 from dataclasses import dataclass, field
 
@@ -159,10 +160,11 @@ class MatchResult:
     archetype: str = ""  # opponent archetype name (free text)
     result: str = RESULT_WIN  # one of RESULT_VALUES
     notes: str = ""
+    deck_revision: int | None = None  # revision the match was played with (None: unknown)
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "id": self.id,
             "date": self.date,
             "event": self.event,
@@ -170,9 +172,13 @@ class MatchResult:
             "result": self.result,
             "notes": self.notes,
         }
+        if self.deck_revision is not None:
+            data["deck_revision"] = self.deck_revision
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> MatchResult:
+        revision = data.get("deck_revision")
         return cls(
             id=str(data.get("id") or uuid.uuid4().hex),
             date=str(data.get("date", "")),
@@ -180,6 +186,7 @@ class MatchResult:
             archetype=str(data.get("archetype", "")),
             result=normalize_result(str(data.get("result", RESULT_WIN))),
             notes=str(data.get("notes", "")),
+            deck_revision=int(revision) if revision is not None else None,
         )
 
 
@@ -220,21 +227,72 @@ class Deck:
 
 
 @dataclass
+class DeckRevision:
+    """A frozen snapshot of an earlier version of the deck."""
+
+    revision: int
+    deck: Deck
+    saved_at: str = ""  # ISO date the snapshot was taken
+
+    def to_dict(self) -> dict:
+        return {"revision": self.revision, "deck": self.deck.to_dict(), "saved_at": self.saved_at}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> DeckRevision:
+        return cls(
+            revision=int(data["revision"]),
+            deck=Deck.from_dict(data.get("deck", {})),
+            saved_at=str(data.get("saved_at", "")),
+        )
+
+
+@dataclass
 class SideboardDocument:
     """Top-level document persisted to a ``*.sbd.json`` file."""
 
     deck: Deck = field(default_factory=Deck)
     archetypes: list[Archetype] = field(default_factory=list)
     results: list[MatchResult] = field(default_factory=list)
+    deck_revision: int = 1  # revision number of the *current* deck
+    revisions: list[DeckRevision] = field(default_factory=list)  # earlier snapshots
     schema_version: int = SCHEMA_VERSION
 
     def to_dict(self) -> dict:
         return {
             "schema_version": self.schema_version,
             "deck": self.deck.to_dict(),
+            "deck_revision": self.deck_revision,
+            "revisions": [r.to_dict() for r in self.revisions],
             "archetypes": [a.to_dict() for a in self.archetypes],
             "results": [r.to_dict() for r in self.results],
         }
+
+    def before_deck_change(self) -> None:
+        """Call before mutating the deck: snapshot it if results reference it.
+
+        If any recorded match was played with the current revision, the current
+        deck is frozen into ``revisions`` and the revision number bumped, so
+        those results stay tied to the exact list they were played with.
+        Otherwise the deck is edited in place and the revision is unchanged.
+        """
+        if not any(r.deck_revision == self.deck_revision for r in self.results):
+            return
+        self.revisions.append(
+            DeckRevision(
+                revision=self.deck_revision,
+                deck=Deck.from_dict(self.deck.to_dict()),  # deep copy
+                saved_at=datetime.date.today().isoformat(),
+            )
+        )
+        self.deck_revision += 1
+
+    def deck_for_revision(self, revision: int | None) -> Deck | None:
+        """The decklist a revision number refers to (current or snapshot)."""
+        if revision is None:
+            return None
+        if revision == self.deck_revision:
+            return self.deck
+        return next((r.deck for r in self.revisions if r.revision == revision), None)
 
     @classmethod
     def from_dict(cls, data: dict) -> SideboardDocument:
@@ -248,6 +306,8 @@ class SideboardDocument:
             deck=Deck.from_dict(data.get("deck", {})),
             archetypes=[Archetype.from_dict(a) for a in data.get("archetypes", [])],
             results=[MatchResult.from_dict(r) for r in data.get("results", [])],
+            deck_revision=int(data.get("deck_revision", 1)),
+            revisions=[DeckRevision.from_dict(r) for r in data.get("revisions", [])],
             schema_version=version,
         )
 

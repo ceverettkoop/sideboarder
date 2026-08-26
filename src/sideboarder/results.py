@@ -70,7 +70,8 @@ def results_to_csv(results: list[MatchResult]) -> str:
     """Render raw match results as CSV text."""
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["date", "event", "archetype", "result", "notes"])
+    writer.writerow(["date", "event", "archetype", "result", "deck_revision", "notes"])
     for r in results:
-        writer.writerow([r.date, r.event, r.archetype, r.result, r.notes])
+        rev = "" if r.deck_revision is None else r.deck_revision
+        writer.writerow([r.date, r.event, r.archetype, r.result, rev, r.notes])
     return buf.getvalue()

@@ -104,15 +104,26 @@ async def test_results_view_toggle_and_entry():
         assert table.row_count == 2
         assert "1-1-0" in str(screen.query_one("#overall-line", Label).render())
 
-        # The entry form mounts (new and edit modes).
+        # The entry form mounts (new and edit modes), as does the revision viewer.
+        from sideboarder.screens.results_screen import RevisionViewScreen
+
         for modal in (
             ResultEntryScreen(["Burn"]),
             ResultEntryScreen(["Burn"], existing=app.document.results[0]),
+            RevisionViewScreen("Deck revision 1", app.document.deck),
         ):
             app.push_screen(modal)
             await pilot.pause()
             app.pop_screen()
             await pilot.pause()
+
+        # A deck edit after logging a result freezes the old list as a revision.
+        app.document.results[0].deck_revision = app.document.deck_revision
+        app.document.before_deck_change()
+        assert app.document.deck_revision == 2
+        assert app.document.revisions[0].revision == 1
+        screen.refresh_results()
+        await pilot.pause()
 
         # Toggle back to the sideboarding view.
         await pilot.press("t")

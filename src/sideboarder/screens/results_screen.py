@@ -22,13 +22,59 @@ from textual.widgets import (
 )
 from textual_autocomplete import AutoComplete
 
-from ..models import RESULT_DRAW, RESULT_LOSS, RESULT_WIN, MatchResult, normalize_result
+from ..models import (
+    RESULT_DRAW,
+    RESULT_LOSS,
+    RESULT_WIN,
+    Deck,
+    MatchResult,
+    normalize_result,
+)
 from ..results import build_records, overall_record, results_to_csv
 from .dialogs import ConfirmScreen, PromptScreen
 
-_COLUMNS = ("Date", "Event", "Opponent", "Result", "Notes")
-_FIELDS = ("date", "event", "archetype", "result", "notes")
+_COLUMNS = ("Date", "Event", "Opponent", "Result", "Rev", "Notes")
+_FIELDS = ("date", "event", "archetype", "result", "deck_revision", "notes")
 _RESULT_BY_INDEX = [RESULT_WIN, RESULT_LOSS, RESULT_DRAW]
+
+
+def _deck_text(deck: Deck) -> str:
+    """Plain-text decklist: mainboard, blank line, sideboard."""
+    lines = [f"{e.qty} {e.name}" for e in deck.mainboard]
+    lines.append("")
+    lines += [f"{e.qty} {e.name}" for e in deck.sideboard]
+    return "\n".join(lines)
+
+
+class RevisionViewScreen(ModalScreen[None]):
+    """Read-only view of the decklist a result was played with."""
+
+    BINDINGS = [("escape", "close", "Close")]
+
+    def __init__(self, title: str, deck: Deck) -> None:
+        super().__init__()
+        self._title = title
+        self._deck = deck
+
+    def compose(self) -> ComposeResult:
+        from textual.containers import VerticalScroll
+        from textual.widgets import Static
+
+        deck = self._deck
+        with Vertical(classes="dialog dialog-wide"):
+            yield Label(self._title, classes="dialog-title")
+            yield Label(
+                f"{deck.name or 'Untitled'} — "
+                f"{deck.mainboard_count()} main / {deck.sideboard_count()} side"
+            )
+            with VerticalScroll(id="revision-list"):
+                yield Static(_deck_text(deck))
+            with Horizontal(classes="dialog-buttons"):
+                yield Button("Close", variant="primary", id="close")
+
+    @on(Button.Pressed, "#close")
+    def action_close(self) -> None:
+        self.dismiss(None)
 
 
 class ResultEntryScreen(ModalScreen[MatchResult | None]):
@@ -83,6 +129,7 @@ class ResultEntryScreen(ModalScreen[MatchResult | None]):
         self.dismiss(
             MatchResult(
                 id=base.id,
+                deck_revision=base.deck_revision,
                 date=self.query_one("#res-date", Input).value.strip(),
                 event=self.query_one("#res-event", Input).value.strip(),
                 archetype=self.query_one("#res-arch", Input).value.strip(),
@@ -103,6 +150,7 @@ class ResultsScreen(Screen):
         ("n", "new_result", "New result"),
         ("e", "edit_row", "Edit row"),
         ("d", "delete_row", "Del row"),
+        ("v", "view_revision", "View deck"),
         ("escape", "back", "Sideboarding"),
     ]
 
@@ -115,7 +163,7 @@ class ResultsScreen(Screen):
                     yield Button("New result", id="new-result", classes="mini")
                 yield DataTable(id="results-table")
                 yield Label(
-                    "enter edit cell · e edit row · n new · d delete",
+                    "enter edit cell · e edit row · n new · d delete · v view rev deck",
                     classes="summary",
                 )
             with Vertical(id="stats-pane"):
@@ -157,7 +205,10 @@ class ResultsScreen(Screen):
         prev = table.cursor_coordinate
         table.clear()
         for res in self._results:
-            table.add_row(res.date, res.event, res.archetype, res.result, res.notes, key=res.id)
+            rev = "—" if res.deck_revision is None else str(res.deck_revision)
+            table.add_row(
+                res.date, res.event, res.archetype, res.result, rev, res.notes, key=res.id
+            )
         if table.row_count:
             table.cursor_coordinate = Coordinate(min(prev.row, table.row_count - 1), prev.column)
         self._refresh_stats()
@@ -199,6 +250,7 @@ class ResultsScreen(Screen):
         def got(res: MatchResult | None) -> None:
             if res is None:
                 return
+            res.deck_revision = self.app.document.deck_revision
             self._results.append(res)
             self._changed()
 
@@ -233,6 +285,18 @@ class ResultsScreen(Screen):
         label = f"{current.date} vs {current.archetype or '?'} ({current.result})"
         self.app.push_screen(ConfirmScreen(f"Delete result '{label}'?"), got)
 
+    def action_view_revision(self) -> None:
+        """Show the decklist as it was when the selected match was played."""
+        current = self._selected()
+        if current is None:
+            return
+        deck = self.app.document.deck_for_revision(current.deck_revision)
+        if deck is None:
+            self.notify("No deck revision recorded for this result.", severity="warning")
+            return
+        title = f"Deck revision {current.deck_revision} — {current.date} vs {current.archetype}"
+        self.app.push_screen(RevisionViewScreen(title, deck))
+
     def action_back(self) -> None:
         self.app.action_toggle_results()
 
@@ -245,6 +309,11 @@ class ResultsScreen(Screen):
             return
         field = _FIELDS[event.coordinate.column]
         column_title = _COLUMNS[event.coordinate.column]
+        if field == "deck_revision":
+            # The revision is pinned when the result is recorded; enter shows
+            # the decklist it refers to instead of editing.
+            self.action_view_revision()
+            return
 
         def got(text: str | None) -> None:
             if text is None:

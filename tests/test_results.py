@@ -1,6 +1,12 @@
 import pytest
 
-from sideboarder.models import MatchResult, SideboardDocument, normalize_result
+from sideboarder.models import (
+    CardEntry,
+    Deck,
+    MatchResult,
+    SideboardDocument,
+    normalize_result,
+)
 from sideboarder.results import build_records, overall_record, results_to_csv
 
 
@@ -58,7 +64,66 @@ def test_overall_record():
 
 
 def test_results_to_csv():
-    text = results_to_csv(_results()[:1])
+    results = _results()[:1]
+    results[0].deck_revision = 2
+    text = results_to_csv(results)
     lines = text.strip().splitlines()
-    assert lines[0] == "date,event,archetype,result,notes"
-    assert lines[1] == "2026-08-01,FNM,Azorius Control,W,"
+    assert lines[0] == "date,event,archetype,result,deck_revision,notes"
+    assert lines[1] == "2026-08-01,FNM,Azorius Control,W,2,"
+
+
+def _doc_with_result() -> SideboardDocument:
+    doc = SideboardDocument(
+        deck=Deck(name="Burn", mainboard=[CardEntry("Lightning Bolt", 4)])
+    )
+    doc.results.append(
+        MatchResult(archetype="Control", result="W", deck_revision=doc.deck_revision)
+    )
+    return doc
+
+
+def test_deck_change_snapshots_revision_referenced_by_results():
+    doc = _doc_with_result()
+    doc.before_deck_change()
+    doc.deck.mainboard[0].qty = 3
+
+    assert doc.deck_revision == 2
+    assert len(doc.revisions) == 1
+    snap = doc.revisions[0]
+    assert snap.revision == 1
+    assert snap.deck.mainboard == [CardEntry("Lightning Bolt", 4)]  # frozen copy
+    assert snap.saved_at  # stamped
+    # The result still resolves to the old list; new results would use rev 2.
+    assert doc.deck_for_revision(doc.results[0].deck_revision) is snap.deck
+    assert doc.deck_for_revision(2) is doc.deck
+    assert doc.deck_for_revision(None) is None
+    assert doc.deck_for_revision(99) is None
+
+
+def test_deck_change_without_results_keeps_revision():
+    doc = SideboardDocument(deck=Deck(name="Burn"))
+    doc.before_deck_change()
+    assert doc.deck_revision == 1
+    assert doc.revisions == []
+
+
+def test_repeated_edits_within_a_revision_snapshot_once():
+    doc = _doc_with_result()
+    doc.before_deck_change()
+    doc.before_deck_change()  # no result on rev 2 yet: no second snapshot
+    assert doc.deck_revision == 2
+    assert len(doc.revisions) == 1
+
+
+def test_document_round_trip_with_revisions():
+    doc = _doc_with_result()
+    doc.before_deck_change()
+    doc.deck.mainboard[0].qty = 3
+    restored = SideboardDocument.from_dict(doc.to_dict())
+    assert restored == doc
+
+
+def test_old_document_defaults_to_revision_one():
+    doc = SideboardDocument.from_dict({"schema_version": 1, "deck": {}, "archetypes": []})
+    assert doc.deck_revision == 1
+    assert doc.revisions == []
