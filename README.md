@@ -22,6 +22,10 @@ and a frequency report shows how often each card is boarded in or out across all
 - **In-app deck editing**: replace a card or change quantities, with name autocomplete.
 - **Card-name autocomplete** backed by a locally-cached card database (downloaded once from
   MTGJSON or Scryfall; updated manually from Settings; works fully offline afterward).
+- **Tournament results tracking** (`t` toggles the view): log matches (date, event,
+  opponent archetype, W/L/D, notes) into the same file, either through a new-result form
+  or by editing table cells directly, with per-archetype records and winrates plus CSV
+  export.
 - **Single deck per file** (`*.sbd.json`), opened and saved individually.
 
 ## Install
@@ -51,6 +55,7 @@ python -m sideboarder
 | `o`      | Open a file                     |
 | `ctrl+s` | Save                            |
 | `f`      | Frequency report                |
+| `t`      | Toggle tournament results view  |
 | `,`      | Settings (card DB source/update)|
 | `?`      | Help                            |
 | `ctrl+q` | Quit                            |
@@ -59,6 +64,10 @@ In the **plan editor**, pick the Base / On-the-play / On-the-draw layer, then **
 **Add IN**; with a list focused, `delete` removes the selected card and `+` / `-` change its
 quantity. In the **deck pane**, focus a table and use `e` to edit/replace, `d` to delete,
 `+` / `-` for quantity.
+
+In the **results view** (`t`), `n` opens a form for a new match result, `enter` edits the
+highlighted cell in place, `e` edits the whole row, and `d` deletes it; the stats pane shows
+W-L-D and winrate per opponent archetype (draws excluded from winrate) plus an overall line.
 
 ## Card database
 
@@ -89,6 +98,16 @@ A document is one JSON file:
       "base": {"out": [{"name": "Searing Blaze", "qty": 2}],
                "in":  [{"name": "Smash to Smithereens", "qty": 2}]},
       "play_override": {"out": [], "in": [{"name": "Roiling Vortex", "qty": 1}]}
+    }
+  ],
+  "results": [
+    {
+      "id": "…",
+      "date": "2026-08-01",
+      "event": "FNM",
+      "archetype": "Azorius Control",
+      "result": "W",
+      "notes": "Game 3 on the draw"
     }
   ]
 }

@@ -136,6 +136,53 @@ class Archetype:
         )
 
 
+RESULT_WIN = "W"
+RESULT_LOSS = "L"
+RESULT_DRAW = "D"
+RESULT_VALUES = (RESULT_WIN, RESULT_LOSS, RESULT_DRAW)
+
+
+def normalize_result(value: str) -> str:
+    """Coerce user input ('w', 'Win', 'loss', …) to W/L/D or raise ValueError."""
+    text = value.strip().upper()
+    if text[:1] in RESULT_VALUES:
+        return text[:1]
+    raise ValueError(f"Result must be one of {'/'.join(RESULT_VALUES)}, got {value!r}")
+
+
+@dataclass
+class MatchResult:
+    """One recorded tournament match."""
+
+    date: str = ""  # ISO yyyy-mm-dd (kept as text; not validated)
+    event: str = ""
+    archetype: str = ""  # opponent archetype name (free text)
+    result: str = RESULT_WIN  # one of RESULT_VALUES
+    notes: str = ""
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "date": self.date,
+            "event": self.event,
+            "archetype": self.archetype,
+            "result": self.result,
+            "notes": self.notes,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> MatchResult:
+        return cls(
+            id=str(data.get("id") or uuid.uuid4().hex),
+            date=str(data.get("date", "")),
+            event=str(data.get("event", "")),
+            archetype=str(data.get("archetype", "")),
+            result=normalize_result(str(data.get("result", RESULT_WIN))),
+            notes=str(data.get("notes", "")),
+        )
+
+
 @dataclass
 class Deck:
     """The player's deck: a mainboard and a sideboard."""
@@ -178,6 +225,7 @@ class SideboardDocument:
 
     deck: Deck = field(default_factory=Deck)
     archetypes: list[Archetype] = field(default_factory=list)
+    results: list[MatchResult] = field(default_factory=list)
     schema_version: int = SCHEMA_VERSION
 
     def to_dict(self) -> dict:
@@ -185,6 +233,7 @@ class SideboardDocument:
             "schema_version": self.schema_version,
             "deck": self.deck.to_dict(),
             "archetypes": [a.to_dict() for a in self.archetypes],
+            "results": [r.to_dict() for r in self.results],
         }
 
     @classmethod
@@ -198,6 +247,7 @@ class SideboardDocument:
         return cls(
             deck=Deck.from_dict(data.get("deck", {})),
             archetypes=[Archetype.from_dict(a) for a in data.get("archetypes", [])],
+            results=[MatchResult.from_dict(r) for r in data.get("results", [])],
             schema_version=version,
         )
 
