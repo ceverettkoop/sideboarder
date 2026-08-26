@@ -82,48 +82,82 @@ def _doc_with_result() -> SideboardDocument:
     return doc
 
 
-def test_deck_change_snapshots_revision_referenced_by_results():
+def test_deck_change_snapshots_but_does_not_bump_revision():
     doc = _doc_with_result()
-    doc.before_deck_change()
+    doc.note_deck_change()
     doc.deck.mainboard[0].qty = 3
 
-    assert doc.deck_revision == 2
+    # A deck edit alone never advances the revision; it only freezes the old
+    # list so the pinned result keeps resolving to what was actually played.
+    assert doc.deck_revision == 1
+    assert doc.deck_modified is True
     assert len(doc.revisions) == 1
     snap = doc.revisions[0]
     assert snap.revision == 1
     assert snap.deck.mainboard == [CardEntry("Lightning Bolt", 4)]  # frozen copy
     assert snap.saved_at  # stamped
-    # The result still resolves to the old list; new results would use rev 2.
     assert doc.deck_for_revision(doc.results[0].deck_revision) is snap.deck
-    assert doc.deck_for_revision(2) is doc.deck
     assert doc.deck_for_revision(None) is None
     assert doc.deck_for_revision(99) is None
 
 
-def test_deck_change_without_results_keeps_revision():
-    doc = SideboardDocument(deck=Deck(name="Burn"))
-    doc.before_deck_change()
-    assert doc.deck_revision == 1
-    assert doc.revisions == []
-
-
-def test_repeated_edits_within_a_revision_snapshot_once():
+def test_commit_finalizes_pending_deck_changes():
     doc = _doc_with_result()
-    doc.before_deck_change()
-    doc.before_deck_change()  # no result on rev 2 yet: no second snapshot
+    doc.note_deck_change()
+    doc.deck.mainboard[0].qty = 3
+
+    # Using the revised deck (a plan edit or a new result) commits revision 2.
+    assert doc.commit_deck_revision() == 2
+    assert doc.deck_modified is False
+    assert doc.deck_for_revision(1) is doc.revisions[0].deck
+    assert doc.deck_for_revision(2) is doc.deck
+    # Committing again without pending changes is a no-op.
+    assert doc.commit_deck_revision() == 2
     assert doc.deck_revision == 2
+
+
+def test_many_deck_edits_become_one_revision():
+    doc = _doc_with_result()
+    for _ in range(3):  # a whole editing session between tournaments
+        doc.note_deck_change()
+    assert doc.deck_revision == 1
+    assert len(doc.revisions) == 1
+    assert doc.commit_deck_revision() == 2
     assert len(doc.revisions) == 1
 
 
-def test_document_round_trip_with_revisions():
+def test_deck_change_without_results_keeps_revision():
+    doc = SideboardDocument(deck=Deck(name="Burn"))
+    doc.note_deck_change()
+    assert doc.deck_revision == 1
+    assert doc.deck_modified is False
+    assert doc.revisions == []
+    # Nothing pending: using the deck doesn't bump either.
+    assert doc.commit_deck_revision() == 1
+
+
+def test_edits_after_commit_without_new_results_stay_in_place():
     doc = _doc_with_result()
-    doc.before_deck_change()
+    doc.note_deck_change()
+    doc.commit_deck_revision()
+    # No results pinned to rev 2 yet: further edits morph rev 2 in place.
+    doc.note_deck_change()
+    assert doc.deck_revision == 2
+    assert doc.deck_modified is False
+    assert len(doc.revisions) == 1
+
+
+def test_document_round_trip_with_pending_deck_changes():
+    doc = _doc_with_result()
+    doc.note_deck_change()
     doc.deck.mainboard[0].qty = 3
     restored = SideboardDocument.from_dict(doc.to_dict())
     assert restored == doc
+    assert restored.deck_modified is True
 
 
 def test_old_document_defaults_to_revision_one():
     doc = SideboardDocument.from_dict({"schema_version": 1, "deck": {}, "archetypes": []})
     assert doc.deck_revision == 1
+    assert doc.deck_modified is False
     assert doc.revisions == []

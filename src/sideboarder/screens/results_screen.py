@@ -250,7 +250,8 @@ class ResultsScreen(Screen):
         def got(res: MatchResult | None) -> None:
             if res is None:
                 return
-            res.deck_revision = self.app.document.deck_revision
+            # Recording a result with a revised deck finalizes it as a new revision.
+            res.deck_revision = self.app.document.commit_deck_revision()
             self._results.append(res)
             self._changed()
 

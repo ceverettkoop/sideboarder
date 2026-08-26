@@ -41,7 +41,9 @@ HELP_TEXT = """\
    n new result · enter edit the highlighted cell · e edit row · d delete row
    v view the decklist revision a result was played with
    Stats pane shows W-L-D and winrate per opponent archetype.
-   Editing the deck after logging results freezes the old list as a revision;
+   Editing the deck after logging results freezes the old list; the revision
+   number only advances when the revised deck is used (a plan is edited or a
+   result is recorded with it), so a batch of deck edits is one revision and
    each result stays tied to the exact decklist it was played with.
 
 Effective plan = base combined with the play/draw override (qty summed per card).
@@ -159,7 +161,7 @@ class SideboarderApp(App):
         def got(deck) -> None:
             if deck is None:
                 return
-            self.document.before_deck_change()
+            self.document.note_deck_change()
             self.document.deck = deck
             self.mark_dirty()
             self.main_screen.refresh_deck()

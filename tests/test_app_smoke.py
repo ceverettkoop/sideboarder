@@ -117,11 +117,14 @@ async def test_results_view_toggle_and_entry():
             app.pop_screen()
             await pilot.pause()
 
-        # A deck edit after logging a result freezes the old list as a revision.
+        # A deck edit after logging a result freezes the old list, but the
+        # revision only advances once the revised deck is used (result / plan).
         app.document.results[0].deck_revision = app.document.deck_revision
-        app.document.before_deck_change()
-        assert app.document.deck_revision == 2
+        app.document.note_deck_change()
+        assert app.document.deck_revision == 1
+        assert app.document.deck_modified is True
         assert app.document.revisions[0].revision == 1
+        assert app.document.commit_deck_revision() == 2
         screen.refresh_results()
         await pilot.pause()
 

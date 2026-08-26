@@ -28,8 +28,11 @@ and a frequency report shows how often each card is boarded in or out across all
   export.
 - **Deck revisions**: each result is pinned to the decklist revision it was played with.
   Editing or re-importing the deck after logging results automatically freezes the old
-  list as a numbered snapshot in the same file; `v` (or `enter` on the Rev cell) shows
-  the exact decklist behind any result.
+  list as a numbered snapshot in the same file. Deck edits alone never create a new
+  revision — any number of composition changes count as one pending revision, which is
+  finalized only when the revised deck is *used*: a sideboard plan is edited against it
+  or a match result is recorded with it. `v` (or `enter` on the Rev cell) shows the
+  exact decklist behind any result.
 - **Single deck per file** (`*.sbd.json`), opened and saved individually.
 
 ## Install
@@ -75,7 +78,9 @@ W-L-D and winrate per opponent archetype (draws excluded from winrate) plus an o
 Each row's **Rev** column names the deck revision it was played with — press `v` (or `enter`
 on the Rev cell) to view that decklist. Deck edits made after results are logged snapshot the
 old list automatically, so old results always point at the version they were actually played
-with.
+with — but the edits themselves don't advance the revision number. However many cards you
+swap, it stays one pending revision until the new deck is used: editing a sideboard plan or
+logging a result finalizes it.
 
 ## Card database
 

@@ -254,11 +254,12 @@ class SideboardDocument:
     archetypes: list[Archetype] = field(default_factory=list)
     results: list[MatchResult] = field(default_factory=list)
     deck_revision: int = 1  # revision number of the *current* deck
+    deck_modified: bool = False  # deck edited since results were pinned to this revision
     revisions: list[DeckRevision] = field(default_factory=list)  # earlier snapshots
     schema_version: int = SCHEMA_VERSION
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "schema_version": self.schema_version,
             "deck": self.deck.to_dict(),
             "deck_revision": self.deck_revision,
@@ -266,17 +267,24 @@ class SideboardDocument:
             "archetypes": [a.to_dict() for a in self.archetypes],
             "results": [r.to_dict() for r in self.results],
         }
+        if self.deck_modified:
+            data["deck_modified"] = True
+        return data
 
-    def before_deck_change(self) -> None:
-        """Call before mutating the deck: snapshot it if results reference it.
+    def note_deck_change(self) -> None:
+        """Call before mutating the deck's composition.
 
-        If any recorded match was played with the current revision, the current
-        deck is frozen into ``revisions`` and the revision number bumped, so
-        those results stay tied to the exact list they were played with.
-        Otherwise the deck is edited in place and the revision is unchanged.
+        Deck edits never advance the revision by themselves — they accumulate
+        as pending changes. If recorded results reference the current revision,
+        its decklist is frozen into ``revisions`` (once) so those results stay
+        tied to the exact list they were played with; the revision number only
+        advances when the revised deck is *used* (see
+        :meth:`commit_deck_revision`).
         """
+        if self.deck_modified:
+            return  # already pending; keep accumulating edits
         if not any(r.deck_revision == self.deck_revision for r in self.results):
-            return
+            return  # nothing pinned to the current deck: edit it in place
         self.revisions.append(
             DeckRevision(
                 revision=self.deck_revision,
@@ -284,15 +292,29 @@ class SideboardDocument:
                 saved_at=datetime.date.today().isoformat(),
             )
         )
-        self.deck_revision += 1
+        self.deck_modified = True
+
+    def commit_deck_revision(self) -> int:
+        """Finalize pending deck changes into a new revision; returns the current one.
+
+        Called when the (possibly revised) deck is actually used: a match result
+        is recorded with it, or a sideboard plan is edited against it.
+        """
+        if self.deck_modified:
+            self.deck_revision += 1
+            self.deck_modified = False
+        return self.deck_revision
 
     def deck_for_revision(self, revision: int | None) -> Deck | None:
-        """The decklist a revision number refers to (current or snapshot)."""
+        """The decklist a revision number refers to (snapshot or current)."""
         if revision is None:
             return None
-        if revision == self.deck_revision:
-            return self.deck
-        return next((r.deck for r in self.revisions if r.revision == revision), None)
+        # Snapshots first: while deck edits are pending, the current revision
+        # number still refers to the frozen list, not the working deck.
+        snap = next((r.deck for r in self.revisions if r.revision == revision), None)
+        if snap is not None:
+            return snap
+        return self.deck if revision == self.deck_revision else None
 
     @classmethod
     def from_dict(cls, data: dict) -> SideboardDocument:
@@ -307,6 +329,7 @@ class SideboardDocument:
             archetypes=[Archetype.from_dict(a) for a in data.get("archetypes", [])],
             results=[MatchResult.from_dict(r) for r in data.get("results", [])],
             deck_revision=int(data.get("deck_revision", 1)),
+            deck_modified=bool(data.get("deck_modified", False)),
             revisions=[DeckRevision.from_dict(r) for r in data.get("revisions", [])],
             schema_version=version,
         )
