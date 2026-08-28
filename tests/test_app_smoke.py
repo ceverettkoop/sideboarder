@@ -86,7 +86,14 @@ async def test_results_view_toggle_and_entry():
     app = SideboarderApp()
     async with app.run_test(size=(120, 40)) as pilot:
         app.document.results.append(
-            MatchResult(date="2026-08-01", event="FNM", archetype="Burn", result="W")
+            MatchResult(
+                date="2026-08-01",
+                event="FNM",
+                archetype="Burn",
+                games_won=2,
+                games_lost=1,
+                play_draw="play",
+            )
         )
         await pilot.press("t")
         await pilot.pause()
@@ -94,14 +101,19 @@ async def test_results_view_toggle_and_entry():
         screen = app.screen
         table = screen.query_one("#results-table", DataTable)
         assert table.row_count == 1
+        # Cells are Rich Text tinted by outcome (2-1 is a win).
+        win_row = table.get_row_at(0)
+        assert [str(cell) for cell in win_row[3:5]] == ["Play", "2-1"]
+        assert str(win_row[4].style) == screen._result_style("W")
 
         # New rows show up and stats aggregate.
         app.document.results.append(
-            MatchResult(date="2026-08-02", event="FNM", archetype="Burn", result="L")
+            MatchResult(date="2026-08-02", event="FNM", archetype="Burn", games_won=0, games_lost=2)
         )
         screen.refresh_results()
         await pilot.pause()
         assert table.row_count == 2
+        assert str(table.get_row_at(1)[4].style) == screen._result_style("L")
         assert "1-1-0" in str(screen.query_one("#overall-line", Label).render())
 
         # The entry form mounts (new and edit modes), as does the revision viewer.

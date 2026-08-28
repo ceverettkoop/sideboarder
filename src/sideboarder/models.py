@@ -11,6 +11,7 @@ Everything serializes to/from plain dicts (stdlib ``json``).
 from __future__ import annotations
 
 import datetime
+import re
 import uuid
 from dataclasses import dataclass, field
 
@@ -142,26 +143,65 @@ RESULT_LOSS = "L"
 RESULT_DRAW = "D"
 RESULT_VALUES = (RESULT_WIN, RESULT_LOSS, RESULT_DRAW)
 
+PLAY = "play"
+DRAW = "draw"
 
-def normalize_result(value: str) -> str:
-    """Coerce user input ('w', 'Win', 'loss', …) to W/L/D or raise ValueError."""
-    text = value.strip().upper()
-    if text[:1] in RESULT_VALUES:
-        return text[:1]
-    raise ValueError(f"Result must be one of {'/'.join(RESULT_VALUES)}, got {value!r}")
+_GAME_SCORE_RE = re.compile(r"^(\d+)\s*[-–/:]\s*(\d+)$")
+
+# Legacy W/L/D match results become the game score they most likely stood for.
+_LEGACY_SCORES = {RESULT_WIN: (2, 0), RESULT_LOSS: (0, 2), RESULT_DRAW: (1, 1)}
+
+
+def parse_game_score(value: str) -> tuple[int, int]:
+    """Parse a game score ('2-1', '1–2', '1/0') into (games won, games lost)."""
+    match = _GAME_SCORE_RE.match(value.strip())
+    if not match:
+        raise ValueError(f"Games must look like '2-1', got {value!r}")
+    return int(match.group(1)), int(match.group(2))
+
+
+def parse_play_draw(value: str) -> str:
+    """Coerce user input ('p', 'Play', 'draw', '') to PLAY/DRAW or '' (unknown)."""
+    text = value.strip().casefold()
+    if not text or text == "—":
+        return ""
+    if PLAY.startswith(text):
+        return PLAY
+    if DRAW.startswith(text):
+        return DRAW
+    raise ValueError(f"Play/draw must be 'play' or 'draw' (or blank), got {value!r}")
 
 
 @dataclass
 class MatchResult:
-    """One recorded tournament match."""
+    """One recorded tournament match, scored in games won/lost."""
 
     date: str = ""  # ISO yyyy-mm-dd (kept as text; not validated)
     event: str = ""
     archetype: str = ""  # opponent archetype name (free text)
-    result: str = RESULT_WIN  # one of RESULT_VALUES
+    games_won: int = 0
+    games_lost: int = 0
+    play_draw: str = ""  # PLAY, DRAW, or "" when not recorded
     notes: str = ""
     deck_revision: int | None = None  # revision the match was played with (None: unknown)
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+    @property
+    def result(self) -> str:
+        """The match outcome (W/L/D) implied by the game score."""
+        if self.games_won > self.games_lost:
+            return RESULT_WIN
+        if self.games_won < self.games_lost:
+            return RESULT_LOSS
+        return RESULT_DRAW
+
+    @property
+    def games_text(self) -> str:
+        return f"{self.games_won}-{self.games_lost}"
+
+    @property
+    def play_draw_text(self) -> str:
+        return self.play_draw.capitalize() if self.play_draw else "—"
 
     def to_dict(self) -> dict:
         data = {
@@ -169,9 +209,12 @@ class MatchResult:
             "date": self.date,
             "event": self.event,
             "archetype": self.archetype,
-            "result": self.result,
+            "games_won": self.games_won,
+            "games_lost": self.games_lost,
             "notes": self.notes,
         }
+        if self.play_draw:
+            data["play_draw"] = self.play_draw
         if self.deck_revision is not None:
             data["deck_revision"] = self.deck_revision
         return data
@@ -179,12 +222,20 @@ class MatchResult:
     @classmethod
     def from_dict(cls, data: dict) -> MatchResult:
         revision = data.get("deck_revision")
+        if "games_won" in data or "games_lost" in data:
+            won, lost = int(data.get("games_won", 0)), int(data.get("games_lost", 0))
+        else:  # documents written before matches were scored in games
+            won, lost = _LEGACY_SCORES.get(
+                str(data.get("result", RESULT_WIN)).strip().upper()[:1], (0, 0)
+            )
         return cls(
             id=str(data.get("id") or uuid.uuid4().hex),
             date=str(data.get("date", "")),
             event=str(data.get("event", "")),
             archetype=str(data.get("archetype", "")),
-            result=normalize_result(str(data.get("result", RESULT_WIN))),
+            games_won=won,
+            games_lost=lost,
+            play_draw=parse_play_draw(str(data.get("play_draw", ""))),
             notes=str(data.get("notes", "")),
             deck_revision=int(revision) if revision is not None else None,
         )

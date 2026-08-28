@@ -17,6 +17,8 @@ class ArchetypeRecord:
     wins: int = 0
     losses: int = 0
     draws: int = 0
+    games_won: int = 0
+    games_lost: int = 0
 
     @property
     def matches(self) -> int:
@@ -27,6 +29,10 @@ class ArchetypeRecord:
         """Wins / decisive matches (draws excluded); None with no decisive matches."""
         decisive = self.wins + self.losses
         return self.wins / decisive if decisive else None
+
+    @property
+    def games_text(self) -> str:
+        return f"{self.games_won}-{self.games_lost}"
 
     @property
     def record_text(self) -> str:
@@ -53,6 +59,8 @@ def build_records(results: list[MatchResult]) -> list[ArchetypeRecord]:
             rec.losses += 1
         elif res.result == RESULT_DRAW:
             rec.draws += 1
+        rec.games_won += res.games_won
+        rec.games_lost += res.games_lost
     return sorted(table.values(), key=lambda r: (-r.matches, r.name.casefold()))
 
 
@@ -63,6 +71,8 @@ def overall_record(results: list[MatchResult]) -> ArchetypeRecord:
         total.wins += rec.wins
         total.losses += rec.losses
         total.draws += rec.draws
+        total.games_won += rec.games_won
+        total.games_lost += rec.games_lost
     return total
 
 
@@ -70,8 +80,32 @@ def results_to_csv(results: list[MatchResult]) -> str:
     """Render raw match results as CSV text."""
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["date", "event", "archetype", "result", "deck_revision", "notes"])
+    writer.writerow(
+        [
+            "date",
+            "event",
+            "archetype",
+            "play_draw",
+            "games_won",
+            "games_lost",
+            "result",
+            "deck_revision",
+            "notes",
+        ]
+    )
     for r in results:
         rev = "" if r.deck_revision is None else r.deck_revision
-        writer.writerow([r.date, r.event, r.archetype, r.result, rev, r.notes])
+        writer.writerow(
+            [
+                r.date,
+                r.event,
+                r.archetype,
+                r.play_draw,
+                r.games_won,
+                r.games_lost,
+                r.result,
+                rev,
+                r.notes,
+            ]
+        )
     return buf.getvalue()

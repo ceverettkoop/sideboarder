@@ -5,32 +5,79 @@ from sideboarder.models import (
     Deck,
     MatchResult,
     SideboardDocument,
-    normalize_result,
+    parse_game_score,
+    parse_play_draw,
 )
 from sideboarder.results import build_records, overall_record, results_to_csv
 
 
 def _results():
     return [
-        MatchResult(date="2026-08-01", event="FNM", archetype="Azorius Control", result="W"),
-        MatchResult(date="2026-08-01", event="FNM", archetype="azorius control", result="L"),
-        MatchResult(date="2026-08-08", event="RCQ", archetype="Azorius Control", result="W"),
-        MatchResult(date="2026-08-08", event="RCQ", archetype="Burn", result="D"),
-        MatchResult(date="2026-08-08", event="RCQ", archetype="", result="L"),
+        MatchResult(
+            date="2026-08-01",
+            event="FNM",
+            archetype="Azorius Control",
+            games_won=2,
+            games_lost=0,
+            play_draw="play",
+        ),
+        MatchResult(
+            date="2026-08-01",
+            event="FNM",
+            archetype="azorius control",
+            games_won=1,
+            games_lost=2,
+            play_draw="draw",
+        ),
+        MatchResult(
+            date="2026-08-08", event="RCQ", archetype="Azorius Control", games_won=2, games_lost=1
+        ),
+        MatchResult(date="2026-08-08", event="RCQ", archetype="Burn", games_won=1, games_lost=1),
+        MatchResult(date="2026-08-08", event="RCQ", archetype="", games_won=0, games_lost=2),
     ]
 
 
-def test_normalize_result_accepts_words_and_case():
-    assert normalize_result("w") == "W"
-    assert normalize_result("Loss") == "L"
-    assert normalize_result(" draw ") == "D"
+def test_parse_game_score_accepts_common_separators():
+    assert parse_game_score("2-1") == (2, 1)
+    assert parse_game_score(" 1 – 2 ") == (1, 2)
+    assert parse_game_score("1/0") == (1, 0)
     with pytest.raises(ValueError):
-        normalize_result("2-1")
+        parse_game_score("W")
+
+
+def test_parse_play_draw_accepts_prefixes_and_blank():
+    assert parse_play_draw("p") == "play"
+    assert parse_play_draw("Draw") == "draw"
+    assert parse_play_draw("") == ""
+    with pytest.raises(ValueError):
+        parse_play_draw("x")
+
+
+def test_match_result_derives_outcome_from_games():
+    assert MatchResult(games_won=2, games_lost=1).result == "W"
+    assert MatchResult(games_won=1, games_lost=2).result == "L"
+    assert MatchResult(games_won=1, games_lost=1).result == "D"
+    assert MatchResult(games_won=2, games_lost=1).games_text == "2-1"
 
 
 def test_match_result_round_trip():
-    res = MatchResult(date="2026-08-01", event="FNM", archetype="Burn", result="L", notes="fast")
+    res = MatchResult(
+        date="2026-08-01",
+        event="FNM",
+        archetype="Burn",
+        games_won=0,
+        games_lost=2,
+        play_draw="draw",
+        notes="fast",
+    )
     assert MatchResult.from_dict(res.to_dict()) == res
+
+
+def test_legacy_result_field_loads_as_game_score():
+    res = MatchResult.from_dict({"archetype": "Burn", "result": "L"})
+    assert (res.games_won, res.games_lost) == (0, 2)
+    assert res.result == "L"
+    assert res.play_draw == ""
 
 
 def test_document_round_trip_with_results():
@@ -50,6 +97,7 @@ def test_build_records_groups_case_insensitively():
     assert (azorius.wins, azorius.losses, azorius.draws) == (2, 1, 0)
     assert azorius.winrate == pytest.approx(2 / 3)
     assert azorius.record_text == "2-1-0"
+    assert azorius.games_text == "5-3"
     assert by_name["Burn"].winrate is None  # draws only: no decisive matches
     assert by_name["Burn"].winrate_text == "—"
     assert "(unknown)" in by_name  # blank archetype gets a bucket
@@ -61,6 +109,7 @@ def test_overall_record():
     assert (total.wins, total.losses, total.draws) == (2, 2, 1)
     assert total.matches == 5
     assert total.winrate == pytest.approx(0.5)
+    assert total.games_text == "6-6"
 
 
 def test_results_to_csv():
@@ -68,8 +117,10 @@ def test_results_to_csv():
     results[0].deck_revision = 2
     text = results_to_csv(results)
     lines = text.strip().splitlines()
-    assert lines[0] == "date,event,archetype,result,deck_revision,notes"
-    assert lines[1] == "2026-08-01,FNM,Azorius Control,W,2,"
+    assert lines[0] == (
+        "date,event,archetype,play_draw,games_won,games_lost,result,deck_revision,notes"
+    )
+    assert lines[1] == "2026-08-01,FNM,Azorius Control,play,2,0,W,2,"
 
 
 def _doc_with_result() -> SideboardDocument:
@@ -77,7 +128,7 @@ def _doc_with_result() -> SideboardDocument:
         deck=Deck(name="Burn", mainboard=[CardEntry("Lightning Bolt", 4)])
     )
     doc.results.append(
-        MatchResult(archetype="Control", result="W", deck_revision=doc.deck_revision)
+        MatchResult(archetype="Control", games_won=2, games_lost=0, deck_revision=doc.deck_revision)
     )
     return doc
 

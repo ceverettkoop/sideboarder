@@ -23,9 +23,9 @@ and a frequency report shows how often each card is boarded in or out across all
 - **Card-name autocomplete** backed by a locally-cached card database (downloaded once from
   MTGJSON or Scryfall; updated manually from Settings; works fully offline afterward).
 - **Tournament results tracking** (`t` toggles the view): log matches (date, event,
-  opponent archetype, W/L/D, notes) into the same file, either through a new-result form
-  or by editing table cells directly, with per-archetype records and winrates plus CSV
-  export.
+  opponent archetype, play/draw, games won-lost such as `2-1`, notes) into the same file,
+  either through a new-result form or by editing table cells directly, with per-archetype
+  records, game counts and winrates plus CSV export.
 - **Deck revisions**: each result is pinned to the decklist revision it was played with.
   Editing or re-importing the deck after logging results automatically freezes the old
   list as a numbered snapshot in the same file. Deck edits alone never create a new
@@ -74,7 +74,11 @@ quantity. In the **deck pane**, focus a table and use `e` to edit/replace, `d` t
 
 In the **results view** (`t`), `n` opens a form for a new match result, `enter` edits the
 highlighted cell in place, `e` edits the whole row, and `d` deletes it; the stats pane shows
-W-L-D and winrate per opponent archetype (draws excluded from winrate) plus an overall line.
+W-L-D, games won-lost and winrate per opponent archetype (draws excluded from winrate) plus an
+overall line. A match is scored in **games** (`2-1`, `1-2`, `1-1`, `1-0`); the match outcome is
+derived from that score, and the **P/D** column records whether you were on the play or the draw.
+Rows are tinted by that outcome — green for a win, red for a loss, yellow for a draw (theme
+colours, with a legend under the table).
 Each row's **Rev** column names the deck revision it was played with — press `v` (or `enter`
 on the Rev cell) to view that decklist. Deck edits made after results are logged snapshot the
 old list automatically, so old results always point at the version they were actually played
@@ -123,9 +127,11 @@ A document is one JSON file:
       "date": "2026-08-01",
       "event": "FNM",
       "archetype": "Azorius Control",
-      "result": "W",
+      "play_draw": "draw",
+      "games_won": 2,
+      "games_lost": 1,
       "deck_revision": 1,
-      "notes": "Game 3 on the draw"
+      "notes": "close"
     }
   ]
 }
