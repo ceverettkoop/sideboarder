@@ -77,6 +77,75 @@ async def test_modal_screens_mount():
             await pilot.pause()
 
 
+async def test_results_view_toggle_and_entry():
+    from textual.widgets import DataTable, Label
+
+    from sideboarder.models import MatchResult
+    from sideboarder.screens.results_screen import ResultEntryScreen, ResultsScreen
+
+    app = SideboarderApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.document.results.append(
+            MatchResult(
+                date="2026-08-01",
+                event="FNM",
+                archetype="Burn",
+                games_won=2,
+                games_lost=1,
+                play_draw="play",
+            )
+        )
+        await pilot.press("t")
+        await pilot.pause()
+        assert isinstance(app.screen, ResultsScreen)
+        screen = app.screen
+        table = screen.query_one("#results-table", DataTable)
+        assert table.row_count == 1
+        # Cells are Rich Text tinted by outcome (2-1 is a win).
+        win_row = table.get_row_at(0)
+        assert [str(cell) for cell in win_row[3:5]] == ["Play", "2-1"]
+        assert str(win_row[4].style) == screen._result_style("W")
+
+        # New rows show up and stats aggregate.
+        app.document.results.append(
+            MatchResult(date="2026-08-02", event="FNM", archetype="Burn", games_won=0, games_lost=2)
+        )
+        screen.refresh_results()
+        await pilot.pause()
+        assert table.row_count == 2
+        assert str(table.get_row_at(1)[4].style) == screen._result_style("L")
+        assert "1-1-0" in str(screen.query_one("#overall-line", Label).render())
+
+        # The entry form mounts (new and edit modes), as does the revision viewer.
+        from sideboarder.screens.results_screen import RevisionViewScreen
+
+        for modal in (
+            ResultEntryScreen(["Burn"]),
+            ResultEntryScreen(["Burn"], existing=app.document.results[0]),
+            RevisionViewScreen("Deck revision 1", app.document.deck),
+        ):
+            app.push_screen(modal)
+            await pilot.pause()
+            app.pop_screen()
+            await pilot.pause()
+
+        # A deck edit after logging a result freezes the old list, but the
+        # revision only advances once the revised deck is used (result / plan).
+        app.document.results[0].deck_revision = app.document.deck_revision
+        app.document.note_deck_change()
+        assert app.document.deck_revision == 1
+        assert app.document.deck_modified is True
+        assert app.document.revisions[0].revision == 1
+        assert app.document.commit_deck_revision() == 2
+        screen.refresh_results()
+        await pilot.pause()
+
+        # Toggle back to the sideboarding view.
+        await pilot.press("t")
+        await pilot.pause()
+        assert isinstance(app.screen, MainScreen)
+
+
 async def test_report_mode_toggle():
     from sideboarder.models import Archetype, Plan
     from sideboarder.report import MODE_DRAW

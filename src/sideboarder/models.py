@@ -10,6 +10,8 @@ Everything serializes to/from plain dicts (stdlib ``json``).
 
 from __future__ import annotations
 
+import datetime
+import re
 import uuid
 from dataclasses import dataclass, field
 
@@ -136,6 +138,109 @@ class Archetype:
         )
 
 
+RESULT_WIN = "W"
+RESULT_LOSS = "L"
+RESULT_DRAW = "D"
+RESULT_VALUES = (RESULT_WIN, RESULT_LOSS, RESULT_DRAW)
+
+PLAY = "play"
+DRAW = "draw"
+
+_GAME_SCORE_RE = re.compile(r"^(\d+)\s*[-–/:]\s*(\d+)$")
+
+# Legacy W/L/D match results become the game score they most likely stood for.
+_LEGACY_SCORES = {RESULT_WIN: (2, 0), RESULT_LOSS: (0, 2), RESULT_DRAW: (1, 1)}
+
+
+def parse_game_score(value: str) -> tuple[int, int]:
+    """Parse a game score ('2-1', '1–2', '1/0') into (games won, games lost)."""
+    match = _GAME_SCORE_RE.match(value.strip())
+    if not match:
+        raise ValueError(f"Games must look like '2-1', got {value!r}")
+    return int(match.group(1)), int(match.group(2))
+
+
+def parse_play_draw(value: str) -> str:
+    """Coerce user input ('p', 'Play', 'draw', '') to PLAY/DRAW or '' (unknown)."""
+    text = value.strip().casefold()
+    if not text or text == "—":
+        return ""
+    if PLAY.startswith(text):
+        return PLAY
+    if DRAW.startswith(text):
+        return DRAW
+    raise ValueError(f"Play/draw must be 'play' or 'draw' (or blank), got {value!r}")
+
+
+@dataclass
+class MatchResult:
+    """One recorded tournament match, scored in games won/lost."""
+
+    date: str = ""  # ISO yyyy-mm-dd (kept as text; not validated)
+    event: str = ""
+    archetype: str = ""  # opponent archetype name (free text)
+    games_won: int = 0
+    games_lost: int = 0
+    play_draw: str = ""  # PLAY, DRAW, or "" when not recorded
+    notes: str = ""
+    deck_revision: int | None = None  # revision the match was played with (None: unknown)
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+    @property
+    def result(self) -> str:
+        """The match outcome (W/L/D) implied by the game score."""
+        if self.games_won > self.games_lost:
+            return RESULT_WIN
+        if self.games_won < self.games_lost:
+            return RESULT_LOSS
+        return RESULT_DRAW
+
+    @property
+    def games_text(self) -> str:
+        return f"{self.games_won}-{self.games_lost}"
+
+    @property
+    def play_draw_text(self) -> str:
+        return self.play_draw.capitalize() if self.play_draw else "—"
+
+    def to_dict(self) -> dict:
+        data = {
+            "id": self.id,
+            "date": self.date,
+            "event": self.event,
+            "archetype": self.archetype,
+            "games_won": self.games_won,
+            "games_lost": self.games_lost,
+            "notes": self.notes,
+        }
+        if self.play_draw:
+            data["play_draw"] = self.play_draw
+        if self.deck_revision is not None:
+            data["deck_revision"] = self.deck_revision
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> MatchResult:
+        revision = data.get("deck_revision")
+        if "games_won" in data or "games_lost" in data:
+            won, lost = int(data.get("games_won", 0)), int(data.get("games_lost", 0))
+        else:  # documents written before matches were scored in games
+            won, lost = _LEGACY_SCORES.get(
+                str(data.get("result", RESULT_WIN)).strip().upper()[:1], (0, 0)
+            )
+        return cls(
+            id=str(data.get("id") or uuid.uuid4().hex),
+            date=str(data.get("date", "")),
+            event=str(data.get("event", "")),
+            archetype=str(data.get("archetype", "")),
+            games_won=won,
+            games_lost=lost,
+            play_draw=parse_play_draw(str(data.get("play_draw", ""))),
+            notes=str(data.get("notes", "")),
+            deck_revision=int(revision) if revision is not None else None,
+        )
+
+
 @dataclass
 class Deck:
     """The player's deck: a mainboard and a sideboard."""
@@ -173,19 +278,94 @@ class Deck:
 
 
 @dataclass
+class DeckRevision:
+    """A frozen snapshot of an earlier version of the deck."""
+
+    revision: int
+    deck: Deck
+    saved_at: str = ""  # ISO date the snapshot was taken
+
+    def to_dict(self) -> dict:
+        return {"revision": self.revision, "deck": self.deck.to_dict(), "saved_at": self.saved_at}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> DeckRevision:
+        return cls(
+            revision=int(data["revision"]),
+            deck=Deck.from_dict(data.get("deck", {})),
+            saved_at=str(data.get("saved_at", "")),
+        )
+
+
+@dataclass
 class SideboardDocument:
     """Top-level document persisted to a ``*.sbd.json`` file."""
 
     deck: Deck = field(default_factory=Deck)
     archetypes: list[Archetype] = field(default_factory=list)
+    results: list[MatchResult] = field(default_factory=list)
+    deck_revision: int = 1  # revision number of the *current* deck
+    deck_modified: bool = False  # deck edited since results were pinned to this revision
+    revisions: list[DeckRevision] = field(default_factory=list)  # earlier snapshots
     schema_version: int = SCHEMA_VERSION
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "schema_version": self.schema_version,
             "deck": self.deck.to_dict(),
+            "deck_revision": self.deck_revision,
+            "revisions": [r.to_dict() for r in self.revisions],
             "archetypes": [a.to_dict() for a in self.archetypes],
+            "results": [r.to_dict() for r in self.results],
         }
+        if self.deck_modified:
+            data["deck_modified"] = True
+        return data
+
+    def note_deck_change(self) -> None:
+        """Call before mutating the deck's composition.
+
+        Deck edits never advance the revision by themselves — they accumulate
+        as pending changes. If recorded results reference the current revision,
+        its decklist is frozen into ``revisions`` (once) so those results stay
+        tied to the exact list they were played with; the revision number only
+        advances when the revised deck is *used* (see
+        :meth:`commit_deck_revision`).
+        """
+        if self.deck_modified:
+            return  # already pending; keep accumulating edits
+        if not any(r.deck_revision == self.deck_revision for r in self.results):
+            return  # nothing pinned to the current deck: edit it in place
+        self.revisions.append(
+            DeckRevision(
+                revision=self.deck_revision,
+                deck=Deck.from_dict(self.deck.to_dict()),  # deep copy
+                saved_at=datetime.date.today().isoformat(),
+            )
+        )
+        self.deck_modified = True
+
+    def commit_deck_revision(self) -> int:
+        """Finalize pending deck changes into a new revision; returns the current one.
+
+        Called when the (possibly revised) deck is actually used: a match result
+        is recorded with it, or a sideboard plan is edited against it.
+        """
+        if self.deck_modified:
+            self.deck_revision += 1
+            self.deck_modified = False
+        return self.deck_revision
+
+    def deck_for_revision(self, revision: int | None) -> Deck | None:
+        """The decklist a revision number refers to (snapshot or current)."""
+        if revision is None:
+            return None
+        # Snapshots first: while deck edits are pending, the current revision
+        # number still refers to the frozen list, not the working deck.
+        snap = next((r.deck for r in self.revisions if r.revision == revision), None)
+        if snap is not None:
+            return snap
+        return self.deck if revision == self.deck_revision else None
 
     @classmethod
     def from_dict(cls, data: dict) -> SideboardDocument:
@@ -198,6 +378,10 @@ class SideboardDocument:
         return cls(
             deck=Deck.from_dict(data.get("deck", {})),
             archetypes=[Archetype.from_dict(a) for a in data.get("archetypes", [])],
+            results=[MatchResult.from_dict(r) for r in data.get("results", [])],
+            deck_revision=int(data.get("deck_revision", 1)),
+            deck_modified=bool(data.get("deck_modified", False)),
+            revisions=[DeckRevision.from_dict(r) for r in data.get("revisions", [])],
             schema_version=version,
         )
 

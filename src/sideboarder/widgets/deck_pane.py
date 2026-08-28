@@ -114,6 +114,7 @@ class DeckPane(Vertical):
         def got(entry: CardEntry | None) -> None:
             if entry is None:
                 return
+            self.app.document.note_deck_change()
             entries[:] = merge_entries(entries, [entry])
             self._changed()
 
@@ -134,6 +135,7 @@ class DeckPane(Vertical):
         def got(entry: CardEntry | None) -> None:
             if entry is None:
                 return
+            self.app.document.note_deck_change()
             # Replace the edited entry, then merge in case the new name collides.
             rebuilt: list[CardEntry] = []
             for e in entries:
@@ -157,6 +159,7 @@ class DeckPane(Vertical):
         name = self._selected_name(which)
         if name is None:
             return
+        self.app.document.note_deck_change()
         entries[:] = [e for e in entries if e.name != name]
         self._changed()
 
@@ -168,6 +171,7 @@ class DeckPane(Vertical):
         name = self._selected_name(which)
         if name is None:
             return
+        self.app.document.note_deck_change()
         for e in entries:
             if e.name == name:
                 e.qty = max(1, e.qty + delta)

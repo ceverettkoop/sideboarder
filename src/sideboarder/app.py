@@ -18,6 +18,7 @@ from .screens.file_dialog import FileDialog
 from .screens.import_screen import ImportScreen
 from .screens.main_screen import MainScreen
 from .screens.report_screen import ReportScreen
+from .screens.results_screen import ResultsScreen
 from .screens.settings_screen import SettingsScreen
 from .storage import default_filename, load_document, save_document
 from .widgets.deck_pane import DeckPane
@@ -29,12 +30,21 @@ HELP_TEXT = """\
 [b]Global[/b]
   i  import / paste decklist      a  add archetype       x  remove archetype
   o  open file    ctrl+s  save    f  frequency report    ,  settings
-  ?  help         ctrl+q  quit
+  t  toggle results view          ?  help                ctrl+q  quit
 
 [b]Archetypes pane[/b]  ↑/↓ select matchup
 [b]Plan editor[/b]  choose Base / Play / Draw layer, Add OUT / Add IN,
    focus a list then: delete remove · + / - change qty
 [b]Deck pane[/b]  focus a table then: e edit/replace · d delete · + / - qty
+
+[b]Results view[/b]  (toggle with t) track tournament matches in the same file:
+   n new result · enter edit the highlighted cell · e edit row · d delete row
+   v view the decklist revision a result was played with
+   Stats pane shows W-L-D and winrate per opponent archetype.
+   Editing the deck after logging results freezes the old list; the revision
+   number only advances when the revised deck is used (a plan is edited or a
+   result is recorded with it), so a batch of deck edits is one revision and
+   each result stays tied to the exact decklist it was played with.
 
 Effective plan = base combined with the play/draw override (qty summed per card).
 """
@@ -82,6 +92,13 @@ class SideboarderApp(App):
     .dialog-buttons Button { margin-left: 2; }
     #decklist-text { height: 1fr; }
     #freq-table { height: 1fr; }
+
+    #results-body { height: 1fr; }
+    #results-pane { width: 1fr; border: round $panel; padding: 0 1; }
+    #stats-pane { width: 44; border: round $panel; padding: 0 1; }
+    #results-table { height: 1fr; }
+    #stats-table { height: 1fr; }
+    #revision-list { height: 1fr; }
     """
 
     BINDINGS = [
@@ -91,6 +108,7 @@ class SideboarderApp(App):
         ("o", "open", "Open"),
         ("ctrl+s", "save", "Save"),
         ("f", "report", "Report"),
+        ("t", "toggle_results", "Results"),
         ("comma", "settings", "Settings"),
         ("question_mark", "help", "Help"),
         ("ctrl+q", "request_quit", "Quit"),
@@ -143,6 +161,7 @@ class SideboarderApp(App):
         def got(deck) -> None:
             if deck is None:
                 return
+            self.document.note_deck_change()
             self.document.deck = deck
             self.mark_dirty()
             self.main_screen.refresh_deck()
@@ -201,6 +220,8 @@ class SideboarderApp(App):
         self._remember_last_file(self.current_path)
         self.main_screen.refresh_archetypes()
         self.main_screen.refresh_deck()
+        if isinstance(self.screen, ResultsScreen):
+            self.screen.refresh_results()
         self.refresh_title()
         self.notify(f"Opened {Path(path).name}")
 
@@ -255,6 +276,13 @@ class SideboarderApp(App):
 
     def action_report(self) -> None:
         self.push_screen(ReportScreen(self.document.archetypes))
+
+    def action_toggle_results(self) -> None:
+        """Switch between the sideboarding workspace and the results view."""
+        if isinstance(self.screen, ResultsScreen):
+            self.pop_screen()
+        elif self.screen is self.main_screen:
+            self.push_screen(ResultsScreen())
 
     def action_settings(self) -> None:
         self.push_screen(SettingsScreen())

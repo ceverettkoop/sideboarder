@@ -22,6 +22,17 @@ and a frequency report shows how often each card is boarded in or out across all
 - **In-app deck editing**: replace a card or change quantities, with name autocomplete.
 - **Card-name autocomplete** backed by a locally-cached card database (downloaded once from
   MTGJSON or Scryfall; updated manually from Settings; works fully offline afterward).
+- **Tournament results tracking** (`t` toggles the view): log matches (date, event,
+  opponent archetype, play/draw, games won-lost such as `2-1`, notes) into the same file,
+  either through a new-result form or by editing table cells directly, with per-archetype
+  records, game counts and winrates plus CSV export.
+- **Deck revisions**: each result is pinned to the decklist revision it was played with.
+  Editing or re-importing the deck after logging results automatically freezes the old
+  list as a numbered snapshot in the same file. Deck edits alone never create a new
+  revision — any number of composition changes count as one pending revision, which is
+  finalized only when the revised deck is *used*: a sideboard plan is edited against it
+  or a match result is recorded with it. `v` (or `enter` on the Rev cell) shows the
+  exact decklist behind any result.
 - **Single deck per file** (`*.sbd.json`), opened and saved individually.
 
 ## Install
@@ -51,6 +62,7 @@ python -m sideboarder
 | `o`      | Open a file                     |
 | `ctrl+s` | Save                            |
 | `f`      | Frequency report                |
+| `t`      | Toggle tournament results view  |
 | `,`      | Settings (card DB source/update)|
 | `?`      | Help                            |
 | `ctrl+q` | Quit                            |
@@ -59,6 +71,20 @@ In the **plan editor**, pick the Base / On-the-play / On-the-draw layer, then **
 **Add IN**; with a list focused, `delete` removes the selected card and `+` / `-` change its
 quantity. In the **deck pane**, focus a table and use `e` to edit/replace, `d` to delete,
 `+` / `-` for quantity.
+
+In the **results view** (`t`), `n` opens a form for a new match result, `enter` edits the
+highlighted cell in place, `e` edits the whole row, and `d` deletes it; the stats pane shows
+W-L-D, games won-lost and winrate per opponent archetype (draws excluded from winrate) plus an
+overall line. A match is scored in **games** (`2-1`, `1-2`, `1-1`, `1-0`); the match outcome is
+derived from that score, and the **P/D** column records whether you were on the play or the draw.
+Rows are tinted by that outcome — green for a win, red for a loss, yellow for a draw (theme
+colours, with a legend under the table).
+Each row's **Rev** column names the deck revision it was played with — press `v` (or `enter`
+on the Rev cell) to view that decklist. Deck edits made after results are logged snapshot the
+old list automatically, so old results always point at the version they were actually played
+with — but the edits themselves don't advance the revision number. However many cards you
+swap, it stays one pending revision until the new deck is used: editing a sideboard plan or
+logging a result finalizes it.
 
 ## Card database
 
@@ -89,6 +115,23 @@ A document is one JSON file:
       "base": {"out": [{"name": "Searing Blaze", "qty": 2}],
                "in":  [{"name": "Smash to Smithereens", "qty": 2}]},
       "play_override": {"out": [], "in": [{"name": "Roiling Vortex", "qty": 1}]}
+    }
+  ],
+  "deck_revision": 2,
+  "revisions": [
+    {"revision": 1, "saved_at": "2026-08-05", "deck": {"name": "Mono-Red Burn", "…": "…"}}
+  ],
+  "results": [
+    {
+      "id": "…",
+      "date": "2026-08-01",
+      "event": "FNM",
+      "archetype": "Azorius Control",
+      "play_draw": "draw",
+      "games_won": 2,
+      "games_lost": 1,
+      "deck_revision": 1,
+      "notes": "close"
     }
   ]
 }

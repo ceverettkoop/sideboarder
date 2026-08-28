@@ -152,6 +152,9 @@ class PlanEditor(Vertical):
         self.query_one("#plan-summary", Label).update("\n".join(parts))
 
     def _changed(self) -> None:
+        # Editing a plan against a revised deck is what makes that deck a new
+        # revision: results logged from here on pin to the updated list.
+        self.app.document.commit_deck_revision()
         self.app.mark_dirty()
         self._refresh_view()
         self.app.refresh_sidebars()
