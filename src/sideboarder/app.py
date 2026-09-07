@@ -95,8 +95,8 @@ class SideboarderApp(App):
     #freq-table { height: 1fr; }
 
     #results-body { height: 1fr; }
-    #results-pane { width: 1fr; border: round $panel; padding: 0 1; }
-    #stats-pane { width: 44; border: round $panel; padding: 0 1; }
+    #results-pane { width: 3fr; border: round $panel; padding: 0 1; }
+    #stats-pane { width: 2fr; min-width: 44; border: round $panel; padding: 0 1; }
     #results-table { height: 1fr; }
     #stats-table { height: 1fr; }
     #revision-list { height: 1fr; }
