@@ -170,3 +170,51 @@ async def test_report_mode_toggle():
 
         table = screen.query_one("#freq-table", DataTable)
         assert table.row_count >= 2  # A (out) and Extra (in, from draw override)
+
+
+async def test_import_screen_terminal_paste():
+    """Bracketed paste from the terminal (the SSH-friendly path) lands in the TextArea."""
+    from textual.events import Paste
+
+    from sideboarder.screens.import_screen import DecklistArea, ImportScreen
+
+    app = SideboarderApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.push_screen(ImportScreen("Deck"))
+        await pilot.pause()
+        area = app.screen.query_one("#decklist-text", DecklistArea)
+        assert area.has_focus
+        area.post_message(Paste("4 Lightning Bolt\n\n2 Pyroblast"))
+        await pilot.pause()
+        assert "Lightning Bolt" in area.text
+        assert "Pyroblast" in area.text
+
+
+async def test_import_screen_ctrl_v_reads_system_clipboard(monkeypatch):
+    """Ctrl+V falls back to the system clipboard when the app clipboard is empty."""
+    import sideboarder.screens.import_screen as import_screen
+
+    monkeypatch.setattr(import_screen, "read_clipboard", lambda: "3 Counterspell")
+    app = SideboarderApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.push_screen(import_screen.ImportScreen("Deck"))
+        await pilot.pause()
+        await pilot.press("ctrl+v")
+        await pilot.pause()
+        area = app.screen.query_one("#decklist-text", import_screen.DecklistArea)
+        assert "Counterspell" in area.text
+
+
+async def test_import_screen_ctrl_v_warns_when_clipboard_unreadable(monkeypatch):
+    """Over SSH the system clipboard is unreadable; Ctrl+V should warn, not crash."""
+    import sideboarder.screens.import_screen as import_screen
+
+    monkeypatch.setattr(import_screen, "read_clipboard", lambda: None)
+    app = SideboarderApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.push_screen(import_screen.ImportScreen("Deck"))
+        await pilot.pause()
+        await pilot.press("ctrl+v")
+        await pilot.pause()
+        area = app.screen.query_one("#decklist-text", import_screen.DecklistArea)
+        assert area.text == ""

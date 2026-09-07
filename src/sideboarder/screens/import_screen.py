@@ -13,6 +13,32 @@ from ..decklist import parse_decklist
 from ..models import Deck
 
 SAMPLE_HINT = "Paste a Moxfield 'MTGO' export (qty name lines; blank line before sideboard)."
+PASTE_HINT = "Paste: terminal paste (Cmd+V / Ctrl+Shift+V, works over SSH), Ctrl+V, or the button."
+SSH_PASTE_WARNING = (
+    "Can't read the system clipboard (common over SSH). "
+    "Use your terminal's own paste instead: Cmd+V (macOS) or Ctrl+Shift+V (Linux/Windows)."
+)
+
+
+class DecklistArea(TextArea):
+    """TextArea whose ctrl+v falls back to the *system* clipboard.
+
+    Textual's built-in ctrl+v pastes from the app-internal clipboard, which is
+    empty unless something was copied inside the app — so for users it looks
+    like paste is broken. Terminal-level paste (bracketed paste) still arrives
+    as a normal Paste event and is handled by TextArea itself.
+    """
+
+    def action_paste(self) -> None:
+        if self.app.clipboard:
+            super().action_paste()
+            return
+        text = read_clipboard()
+        if text:
+            if result := self._replace_via_keyboard(text, *self.selection):
+                self.move_cursor(result.end_location)
+        else:
+            self.notify(SSH_PASTE_WARNING, severity="warning")
 
 
 class ImportScreen(ModalScreen[Deck | None]):
@@ -33,7 +59,8 @@ class ImportScreen(ModalScreen[Deck | None]):
             yield Label("Deck name")
             yield Input(value=self._deck_name, id="deck-name")
             yield Label(SAMPLE_HINT)
-            yield TextArea(id="decklist-text")
+            yield Label(PASTE_HINT, classes="dialog-hint")
+            yield DecklistArea(id="decklist-text")
             yield Label("", id="preview")
             with Horizontal(classes="dialog-buttons"):
                 yield Button("Paste clipboard", id="paste")
@@ -54,9 +81,7 @@ class ImportScreen(ModalScreen[Deck | None]):
             f"Sideboard: {deck.sideboard_count()} cards ({len(deck.sideboard)} unique)"
         )
         if result.unparsed:
-            msg += f"\n⚠ {len(result.unparsed)} unparsed line(s): " + "; ".join(
-                result.unparsed[:3]
-            )
+            msg += f"\n⚠ {len(result.unparsed)} unparsed line(s): " + "; ".join(result.unparsed[:3])
         self.query_one("#preview", Label).update(msg)
 
     @on(Button.Pressed, "#paste")
@@ -64,7 +89,7 @@ class ImportScreen(ModalScreen[Deck | None]):
         text = read_clipboard()
         if not text:
             self.app.bell()
-            self.notify("Couldn't read the system clipboard.", severity="warning")
+            self.notify(SSH_PASTE_WARNING, severity="warning")
             return
         area = self.query_one("#decklist-text", TextArea)
         area.replace(text, area.selection.start, area.selection.end)

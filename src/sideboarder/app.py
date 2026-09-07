@@ -88,6 +88,7 @@ class SideboarderApp(App):
     }
     .dialog-wide { width: 90; height: 80%; }
     .dialog-title { text-style: bold; color: $accent; margin-bottom: 1; }
+    .dialog-hint { color: $text-muted; }
     .dialog-buttons { height: auto; margin-top: 1; align-horizontal: right; }
     .dialog-buttons Button { margin-left: 2; }
     #decklist-text { height: 1fr; }
