@@ -1,3 +1,5 @@
+//go:build !js
+
 // Command sideboarder-web serves the Sideboarder sideboard planner as a
 // mobile-friendly web app, intended for use over a Tailscale network.
 //
@@ -77,7 +79,7 @@ Examples:
 	static, _ := fs.Sub(staticFiles, "static")
 	srv := &http.Server{
 		Addr:              listen,
-		Handler:           logRequests(newServer(absDir, db, static).routes()),
+		Handler:           logRequests(newServer(dirStore{dir: absDir}, db, static).routes()),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Printf("documents in %s", absDir)

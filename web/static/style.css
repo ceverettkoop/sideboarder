@@ -29,7 +29,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #16181d;
     --surface: #1f2228;
     --surface-2: #2a2e36;
@@ -53,6 +53,30 @@
     --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 4px 16px rgb(0 0 0 / 25%);
     color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #16181d;
+  --surface: #1f2228;
+  --surface-2: #2a2e36;
+  --text: #e8e9ec;
+  --muted: #9aa0ab;
+  --border: #353a44;
+  --accent: #7c9cff;
+  --accent-text: #0f1320;
+  --accent-soft: #263156;
+  --out: #f08c76;
+  --out-soft: #4a2a24;
+  --in: #6fd3a2;
+  --in-soft: #1e3d30;
+  --win: #6fd3a2;
+  --win-soft: #1b3a2c;
+  --loss: #f08484;
+  --loss-soft: #452426;
+  --draw: #e8c066;
+  --draw-soft: #40361c;
+  --warn: #f0b45a;
+  --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 4px 16px rgb(0 0 0 / 25%);
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -91,7 +115,7 @@ button, input, textarea { font: inherit; color: inherit; }
 .topbar {
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; gap: 8px;
-  padding: calc(8px + env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
+  padding: calc(8px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -135,7 +159,7 @@ button, input, textarea { font: inherit; color: inherit; }
 
 main {
   max-width: 1400px; margin: 0 auto;
-  padding: 12px max(12px, env(safe-area-inset-right)) 24px max(12px, env(safe-area-inset-left));
+  padding: 12px max(16px, env(safe-area-inset-right)) 24px max(16px, env(safe-area-inset-left));
   outline: none;
 }
 .loading { color: var(--muted); text-align: center; margin-top: 3rem; }
@@ -467,4 +491,10 @@ input:focus, textarea:focus { border-color: var(--accent); outline: none; box-sh
   .deck-side { display: block; }
   .deck-grid .pane { columns: 2; column-gap: 24px; }
   .deck-grid .list-block { break-inside: avoid; margin-top: 0; }
+}
+
+/* Shown only by the in-browser demo build (demo/build.sh). */
+.demo-banner {
+  margin: 0; padding: 6px 12px; text-align: center; font-size: 0.78rem;
+  background: var(--accent-soft); color: var(--text); border-bottom: 1px solid var(--border);
 }

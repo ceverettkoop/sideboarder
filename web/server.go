@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"mime"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -21,7 +20,7 @@ import (
 )
 
 type server struct {
-	dir    string // directory of *.sbd.json documents
+	store  docStore // the *.sbd.json documents
 	db     *carddb.DB
 	static fs.FS
 
@@ -38,8 +37,8 @@ type cardJob struct {
 	Error   string `json:"error"`
 }
 
-func newServer(dir string, db *carddb.DB, static fs.FS) *server {
-	return &server{dir: dir, db: db, static: static}
+func newServer(store docStore, db *carddb.DB, static fs.FS) *server {
+	return &server{store: store, db: db, static: static}
 }
 
 func (s *server) routes() http.Handler {
@@ -117,26 +116,40 @@ func validName(name string) bool {
 		filepath.Base(name) == name
 }
 
-func (s *server) path(name string) (string, error) {
+func checkName(name string) error {
 	if !validName(name) {
-		return "", errStatus(http.StatusBadRequest, "invalid document name %q", name)
+		return errStatus(http.StatusBadRequest, "invalid document name %q", name)
 	}
-	return filepath.Join(s.dir, name), nil
+	return nil
 }
 
-func (s *server) load(name string) (*sbd.Document, string, error) {
-	p, err := s.path(name)
-	if err != nil {
-		return nil, "", err
+func (s *server) load(name string) (*sbd.Document, error) {
+	if err := checkName(name); err != nil {
+		return nil, err
 	}
-	doc, err := sbd.LoadDocument(p)
+	data, _, err := s.store.Read(name)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, "", errStatus(http.StatusNotFound, "no document named %q", name)
+		return nil, errStatus(http.StatusNotFound, "no document named %q", name)
 	}
 	if err != nil {
-		return nil, "", errStatus(http.StatusUnprocessableEntity, "open %s failed: %v", name, err)
+		return nil, errStatus(http.StatusInternalServerError, "open %s failed: %v", name, err)
 	}
-	return doc, p, nil
+	doc, err := sbd.ParseDocument(data)
+	if err != nil {
+		return nil, errStatus(http.StatusUnprocessableEntity, "open %s failed: %v", name, err)
+	}
+	return doc, nil
+}
+
+func (s *server) save(name string, doc *sbd.Document) error {
+	data, err := sbd.Marshal(doc)
+	if err == nil {
+		err = s.store.Write(name, data)
+	}
+	if err != nil {
+		return errStatus(http.StatusInternalServerError, "save failed: %v", err)
+	}
+	return nil
 }
 
 type fileResponse struct {
@@ -146,10 +159,10 @@ type fileResponse struct {
 	Result   *sbd.OpResult `json:"result,omitempty"`
 }
 
-func (s *server) respondDoc(w http.ResponseWriter, name, path string, doc *sbd.Document, res *sbd.OpResult) {
+func (s *server) respondDoc(w http.ResponseWriter, name string, doc *sbd.Document, res *sbd.OpResult) {
 	modified := ""
-	if st, err := os.Stat(path); err == nil {
-		modified = st.ModTime().Format(time.RFC3339)
+	if _, mod, err := s.store.Read(name); err == nil {
+		modified = mod.Format(time.RFC3339)
 	}
 	writeJSON(w, http.StatusOK, fileResponse{File: name, Modified: modified, View: sbd.BuildView(doc), Result: res})
 }
@@ -164,21 +177,15 @@ type fileInfo struct {
 }
 
 func (s *server) listFiles(w http.ResponseWriter, r *http.Request) {
-	entries, err := os.ReadDir(s.dir)
+	docs, err := s.store.List()
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	files := []fileInfo{}
-	for _, e := range entries {
-		if e.IsDir() || !validName(e.Name()) {
-			continue
-		}
-		info := fileInfo{File: e.Name()}
-		if st, err := e.Info(); err == nil {
-			info.Modified = st.ModTime().Format(time.RFC3339)
-		}
-		if doc, err := sbd.LoadDocument(filepath.Join(s.dir, e.Name())); err == nil {
+	for _, d := range docs {
+		info := fileInfo{File: d.Name, Modified: d.Modified.Format(time.RFC3339)}
+		if doc, err := s.load(d.Name); err == nil {
 			info.DeckName = doc.Deck.Name
 		} else {
 			info.Error = err.Error()
@@ -186,7 +193,7 @@ func (s *server) listFiles(w http.ResponseWriter, r *http.Request) {
 		files = append(files, info)
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Modified > files[j].Modified })
-	writeJSON(w, http.StatusOK, map[string]any{"dir": s.dir, "files": files})
+	writeJSON(w, http.StatusOK, map[string]any{"dir": s.store.Location(), "files": files})
 }
 
 // freeName returns name, or name with a -2, -3 … suffix if that file exists.
@@ -197,7 +204,7 @@ func (s *server) freeName(name string) string {
 		if i > 1 {
 			candidate = fmt.Sprintf("%s-%d%s", stem, i, sbd.FileSuffix)
 		}
-		if _, err := os.Stat(filepath.Join(s.dir, candidate)); errors.Is(err, fs.ErrNotExist) {
+		if !s.store.Exists(candidate) {
 			return candidate
 		}
 	}
@@ -244,22 +251,21 @@ func (s *server) createFile(w http.ResponseWriter, r *http.Request) {
 	if deck := strings.TrimSpace(req.DeckName); deck != "" {
 		doc.Deck.Name = deck
 	}
-	p := filepath.Join(s.dir, name)
-	if err := sbd.SaveDocument(doc, p); err != nil {
-		writeErr(w, errStatus(http.StatusInternalServerError, "save failed: %v", err))
+	if err := s.save(name, doc); err != nil {
+		writeErr(w, err)
 		return
 	}
-	s.respondDoc(w, name, p, doc, nil)
+	s.respondDoc(w, name, doc, nil)
 }
 
 func (s *server) getFile(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("file")
-	doc, p, err := s.load(name)
+	doc, err := s.load(name)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	s.respondDoc(w, name, p, doc, nil)
+	s.respondDoc(w, name, doc, nil)
 }
 
 func (s *server) applyOp(w http.ResponseWriter, r *http.Request) {
@@ -271,7 +277,7 @@ func (s *server) applyOp(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("file")
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	doc, p, err := s.load(name)
+	doc, err := s.load(name)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -281,11 +287,11 @@ func (s *server) applyOp(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if err := sbd.SaveDocument(doc, p); err != nil {
-		writeErr(w, errStatus(http.StatusInternalServerError, "save failed: %v", err))
+	if err := s.save(name, doc); err != nil {
+		writeErr(w, err)
 		return
 	}
-	s.respondDoc(w, name, p, doc, &res)
+	s.respondDoc(w, name, doc, &res)
 }
 
 // copyFile is "save as": write the document under a new name.
@@ -297,7 +303,7 @@ func (s *server) copyFile(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	doc, _, err := s.load(r.PathValue("file"))
+	doc, err := s.load(r.PathValue("file"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -308,12 +314,11 @@ func (s *server) copyFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name = s.freeName(name)
-	p := filepath.Join(s.dir, name)
-	if err := sbd.SaveDocument(doc, p); err != nil {
-		writeErr(w, errStatus(http.StatusInternalServerError, "save failed: %v", err))
+	if err := s.save(name, doc); err != nil {
+		writeErr(w, err)
 		return
 	}
-	s.respondDoc(w, name, p, doc, nil)
+	s.respondDoc(w, name, doc, nil)
 }
 
 func attachment(w http.ResponseWriter, filename, contentType string, body []byte) {
@@ -324,12 +329,11 @@ func attachment(w http.ResponseWriter, filename, contentType string, body []byte
 
 func (s *server) download(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("file")
-	p, err := s.path(name)
-	if err != nil {
+	if err := checkName(name); err != nil {
 		writeErr(w, err)
 		return
 	}
-	data, err := os.ReadFile(p)
+	data, _, err := s.store.Read(name)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -354,7 +358,7 @@ func (s *server) report(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	doc, _, err := s.load(r.PathValue("file"))
+	doc, err := s.load(r.PathValue("file"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -368,7 +372,7 @@ func (s *server) reportCSV(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	doc, _, err := s.load(r.PathValue("file"))
+	doc, err := s.load(r.PathValue("file"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -378,7 +382,7 @@ func (s *server) reportCSV(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) resultsCSV(w http.ResponseWriter, r *http.Request) {
-	doc, _, err := s.load(r.PathValue("file"))
+	doc, err := s.load(r.PathValue("file"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -425,7 +429,7 @@ func (s *server) getSettings(w http.ResponseWriter, r *http.Request) {
 		"sources":     carddb.Sources,
 		"db":          s.db.Status(),
 		"job":         job,
-		"dir":         s.dir,
+		"dir":         s.store.Location(),
 	})
 }
 

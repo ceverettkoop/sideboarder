@@ -253,6 +253,12 @@ func (db *DB) set(f fileFormat) {
 	db.mu.Unlock()
 }
 
+// Use replaces the in-memory names without touching disk (for the
+// in-browser demo build).
+func (db *DB) Use(source, updated string, names []string) {
+	db.set(fileFormat{Source: source, Updated: updated, Names: Distill(names)})
+}
+
 // Update fetches from source, distills, persists and reloads. Returns the count.
 // A nil fetch uses the built-in provider for source.
 func (db *DB) Update(source string, progress ProgressFn, fetch FetchFn) (int, error) {

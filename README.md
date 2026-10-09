@@ -97,6 +97,11 @@ On a phone, "Add to Home Screen" gives it an app icon. Differences from the TUI:
 
 Run the Go tests with `cd web && go test ./...`.
 
+**Try it without a server:** `web/demo/build.sh` compiles the same server to WebAssembly and
+writes a static site to `web/demo/dist/` (serve it with any static file server, e.g.
+`python3 -m http.server -d web/demo/dist`). It opens with a sample deck and keeps documents
+in the browser's localStorage instead of on disk.
+
 ## Keys
 
 | Key      | Action                          |

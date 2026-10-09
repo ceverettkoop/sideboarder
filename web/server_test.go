@@ -1,3 +1,5 @@
+//go:build !js
+
 package main
 
 import (
@@ -27,7 +29,7 @@ func newTestServer(t *testing.T) *testServer {
 	dir := t.TempDir()
 	static := fstest.MapFS{"index.html": {Data: []byte("<!doctype html>hi")}}
 	db := carddb.New(filepath.Join(t.TempDir(), "cardnames.json"))
-	ts := httptest.NewServer(newServer(dir, db, static).routes())
+	ts := httptest.NewServer(newServer(dirStore{dir: dir}, db, static).routes())
 	t.Cleanup(ts.Close)
 	return &testServer{Server: ts, dir: dir, t: t}
 }
@@ -203,5 +205,37 @@ func TestResolveListenAddr(t *testing.T) {
 	}
 	if _, err := resolveListenAddr("nonsense"); err == nil {
 		t.Fatal("accepted an address without a port")
+	}
+}
+
+// The in-browser demo build serves documents from memory.
+func TestMemStoreServer(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var written []string
+	store := newMemStore()
+	store.onWrite = func(name string, _ []byte) { written = append(written, name) }
+	db := carddb.New(filepath.Join(t.TempDir(), "cardnames.json"))
+	db.Use("demo", "now", []string{"Lightning Bolt", "Lava Spike"})
+	srv := httptest.NewServer(newServer(store, db, fstest.MapFS{}).routes())
+	defer srv.Close()
+	ts := &testServer{Server: srv, t: t}
+
+	if code, res := ts.do("POST", "/api/files", map[string]string{"deck_name": "Burn"}); code != 200 || res["file"] != "Burn.sbd.json" {
+		t.Fatalf("create: %d %v", code, res)
+	}
+	if code, res := ts.do("POST", "/api/files/Burn.sbd.json/ops", map[string]any{"op": "add_archetype", "name": "Control"}); code != 200 {
+		t.Fatalf("op: %d %v", code, res)
+	}
+	if code, res := ts.do("GET", "/api/files", nil); code != 200 || len(res["files"].([]any)) != 1 || res["dir"] != "(in this browser tab)" {
+		t.Fatalf("list: %d %v", code, res)
+	}
+	if len(written) != 2 {
+		t.Fatalf("persistence hook calls: %v", written)
+	}
+	resp, _ := http.Get(srv.URL + "/api/cards?q=la")
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), "Lava Spike") {
+		t.Fatalf("cards: %s", body)
 	}
 }
