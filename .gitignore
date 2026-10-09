@@ -219,3 +219,5 @@ __marimo__/
 
 #save dir
 saves/*.json
+# Go web server build output
+web/bin/

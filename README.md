@@ -1,7 +1,8 @@
 # Sideboarder
 
 A terminal UI ([Textual](https://textual.textualize.io/)) for planning **Magic: The
-Gathering** sideboard guides.
+Gathering** sideboard guides — plus a mobile-friendly [web app](#web-app-mobile-over-tailscale)
+served by a small Go server over Tailscale, working on the same files.
 
 Load a decklist, list the opponent archetypes you expect, and for each matchup record
 which cards come **OUT** of the mainboard and which come **IN** from the sideboard — with
@@ -51,6 +52,50 @@ sideboarder my-deck.sbd.json  # open an existing file
 # or, without installing:
 python -m sideboarder
 ```
+
+## Web app (mobile, over Tailscale)
+
+`web/` holds a Go server that serves the same features as a mobile-friendly web page, so
+you can check and update sideboard plans and log results from your phone between rounds.
+It reads and writes the **same `*.sbd.json` files** (and the same card-name database) as the
+TUI, so the two can be used side by side.
+
+```bash
+./run-web.sh                       # build + serve on http://<tailnet-ip>:8080
+# or
+cd web && go build -o bin/sideboarder-web . && ./bin/sideboarder-web
+```
+
+Requires Go 1.22+ and no third-party Go modules; the HTML/JS/CSS is embedded in the binary.
+
+| Flag         | Default                                  | Meaning                                    |
+| ------------ | ---------------------------------------- | ------------------------------------------ |
+| `-addr`      | `tailscale:8080`                         | Listen address. The host `tailscale` binds to this machine's tailnet IP only, so the page isn't reachable from the LAN or internet. Any other `host:port` is used as given. |
+| `-dir`       | TUI's default save dir, else `./saves`   | Folder of `*.sbd.json` documents.          |
+| `-cardnames` | the TUI's `cardnames.json`               | Card-name database for autocomplete.       |
+
+Open `http://<machine-name>:8080` (MagicDNS) or `http://100.x.y.z:8080` from any device on
+your tailnet, and use your Tailscale ACLs to decide who can reach it — the server itself has
+no login. For HTTPS and a clean URL, bind to localhost and let Tailscale proxy it:
+
+```bash
+./run-web.sh -addr 127.0.0.1:8080
+tailscale serve --bg 8080          # https://<machine-name>.<tailnet>.ts.net
+```
+
+On a phone, "Add to Home Screen" gives it an app icon. Differences from the TUI:
+
+- **Every change is saved immediately** (there is no Save / unsaved state). Edits are sent as
+  small operations applied to the latest file on disk, so a phone and a laptop can edit the
+  same document; switching back to the tab reloads it.
+- Documents are picked from the server's folder (**New**, **Open**, **Save a copy as**,
+  **Download**) instead of arbitrary paths. CSV exports download to the browser.
+- Matchups can be renamed and given notes, and each plan shows its **effective** play/draw
+  lists. Deck name/format can be edited without re-importing.
+- The card database update downloads MTGJSON's `.gz` file (the TUI uses `.xz`); the
+  resulting `cardnames.json` is identical in format.
+
+Run the Go tests with `cd web && go test ./...`.
 
 ## Keys
 

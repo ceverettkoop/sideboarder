@@ -1,0 +1,10 @@
+{
+  "name": "Sideboarder",
+  "short_name": "Sideboarder",
+  "description": "MTG sideboard guide planner and tournament results tracker",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f5f2",
+  "theme_color": "#2f5bd3",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
