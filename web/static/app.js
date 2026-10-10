@@ -43,6 +43,7 @@ const S = {
   layer: 'base',         // plan layer being edited: base | play | draw
   showEffective: store.get('effective', false),
   reportMode: 'base',
+  openFits: new Set(),   // build view: matchups whose plan is expanded
   report: null,
   pending: 0,            // in-flight saves
 };
@@ -188,8 +189,18 @@ function renderMain() {
     main.innerHTML = welcome();
     return;
   }
-  const views = { plans: viewPlans, deck: viewDeck, results: viewResults, report: viewReport };
+  const views = { plans: viewPlans, deck: viewDeck, build: viewBuild, results: viewResults, report: viewReport };
+  // Keep focus (e.g. on the next metagame share) across re-renders.
+  const focused = document.activeElement;
+  let refocus = '';
+  if (focused && focused !== main && main.contains(focused)) {
+    if (focused.id) refocus = `#${CSS.escape(focused.id)}`;
+    else if (focused.dataset.act && focused.dataset.id) {
+      refocus = `[data-act="${CSS.escape(focused.dataset.act)}"][data-id="${CSS.escape(focused.dataset.id)}"]`;
+    }
+  }
   main.innerHTML = (views[S.tab] || viewPlans)();
+  if (refocus) main.querySelector(refocus)?.focus();
 }
 
 function welcome() {
@@ -449,6 +460,171 @@ function viewResults() {
       <p class="hint">Draws are excluded from winrate.</p>
     </section>
   </div>`;
+}
+
+// ----- build view (metagame builder) --------------------------------------------------------
+
+const pct = (x) => `${Math.round(x * 10) / 10}%`;
+
+function viewBuild() {
+  const v = S.view;
+  const archs = v.doc.archetypes;
+  if (!archs.length) {
+    return `<section class="empty-state">
+      <h2>Build a 75 from your matchups</h2>
+      <p>Add the opponent archetypes you expect first. Then give each one its share of the field and the
+      60 cards you want after sideboarding, and this suggests a main deck and sideboard.</p>
+      <div class="btn-row center"><button class="btn primary" data-act="arch-add">Add archetype</button></div>
+    </section>`;
+  }
+  const shareTotal = archs.reduce((n, a) => n + (a.meta_share || 0), 0);
+  const rows = archs.map((a) => {
+    const size = total(a.target_deck || []);
+    const status = !size ? '<span class="status none">No post-board deck</span>'
+      : size === 60 ? '<span class="status ok">60 cards</span>'
+        : `<span class="status warn">${size} cards</span>`;
+    return `<li class="meta-row">
+      <span class="meta-name">${esc(a.name)}</span>
+      <label class="share">
+        <input type="number" id="share-${esc(a.id)}" inputmode="decimal" min="0" max="100" step="0.5"
+          value="${a.meta_share ?? ''}" placeholder="—" data-share="${esc(a.id)}" aria-label="${esc(a.name)} share of the field">
+        <span>%</span>
+      </label>
+      ${status}
+      <button class="btn small" data-act="target-edit" data-id="${esc(a.id)}">${size ? 'Edit deck' : 'Set deck'}</button>
+    </li>`;
+  }).join('');
+  let shareNote = `Shares add up to ${pct(shareTotal)}.`;
+  if (shareTotal > 100.05) shareNote += ' <span class="warn-text">That’s over 100%.</span>';
+  else if (shareTotal > 0 && shareTotal < 99.95) shareNote += ` The other ${pct(100 - shareTotal)} of the field isn’t planned for.`;
+  return `<section class="pane">
+      <div class="pane-head"><h2>Metagame</h2></div>
+      <p class="hint">For each matchup, enter its share of the field and the 60 cards you want to play after
+        sideboarding. Shares only need to be right relative to each other.</p>
+      <ul class="meta-list">${rows}</ul>
+      <p class="hint">${shareNote}</p>
+    </section>
+    ${v.suggestion.ready ? suggestionView(v.suggestion) : `<section class="pane empty-state small">
+      <h2>No suggestion yet</h2>
+      <p>Set a post-board deck for at least one matchup to get a suggested main deck and sideboard.</p>
+    </section>`}`;
+}
+
+function suggestionView(sug) {
+  // "new" marks a card that isn't anywhere in the current 75; moves between
+  // main deck and sideboard show as +/− counts.
+  const delta = (now, before, inDeck) => {
+    if (now === before) return '';
+    if (!inDeck) return '<span class="delta add">new</span>';
+    return `<span class="delta ${now > before ? 'add' : 'cut'}">${now > before ? '+' : '−'}${Math.abs(now - before)}</span>`;
+  };
+  const cardRows = (key, curKey) => sug.cards.filter((c) => c[key] > 0).map((c) => `<li class="card-row">
+      <span class="qty">${c[key]}</span>
+      <span class="name">${esc(c.name)} ${delta(c[key], c[curKey], c.current_main + c.current_side > 0)}</span>
+      <span class="avg" title="Copies wanted by share of the field: ${c.wanted.map(pct).join(', ')}">avg ${c.average}</span>
+    </li>`).join('');
+  const kept = new Set(sug.cards.map((c) => fold(c.name)));
+  const deck = S.view.doc.deck;
+  const cuts = [...deck.mainboard, ...deck.sideboard].filter((e) => !kept.has(fold(e.name)));
+  const cutNames = [...new Set(cuts.map((e) => e.name))];
+  const mainCount = total(sug.main), sideCount = total(sug.side);
+  const fits = sug.matchups.map((f) => {
+    const open = S.openFits.has(f.archetype_id);
+    const list = (entries) => entries.map((e) => `<li><span class="qty">${e.qty}</span> ${esc(e.name)}</li>`).join('') || '<li class="muted">—</li>';
+    return `<tr class="fit ${open ? 'open' : ''}" data-act="fit-toggle" data-id="${esc(f.archetype_id)}" tabindex="0" aria-expanded="${open}">
+        <td>${esc(f.name)}</td><td>${pct(f.weight)}</td>
+        <td>${f.game1}/${f.target_size}</td><td>${f.postboard}/${f.target_size}</td><td>${f.swaps}</td>
+      </tr>
+      ${open ? `<tr class="fit-detail"><td colspan="5">
+        <div class="eff-cols">
+          <div><span class="tag out">OUT</span><ul>${list(f.plan.out)}</ul></div>
+          <div><span class="tag in">IN</span><ul>${list(f.plan.in)}</ul></div>
+        </div>
+        ${f.missing.length ? `<p class="warn-text small-text">Not in the 75: ${f.missing.map((e) => `${e.qty} ${esc(e.name)}`).join(', ')}</p>` : ''}
+      </td></tr>` : ''}`;
+  }).join('');
+  return `<section class="pane">
+      <div class="pane-head">
+        <h2>Suggested 75</h2>
+        <button class="btn primary small" data-act="apply-suggestion">Use this deck and plans</button>
+      </div>
+      <div class="stats">
+        <div class="stat"><span class="stat-num">${pct(sug.game1_rate)}</span><span class="stat-label">of target cards in game 1</span></div>
+        <div class="stat"><span class="stat-num">${pct(sug.postboard_rate)}</span><span class="stat-label">after sideboarding</span></div>
+        <div class="stat"><span class="stat-num">${sug.avg_swaps}</span><span class="stat-label">cards swapped per match</span></div>
+      </div>
+      <p class="hint">Every copy of a card is ranked by how much of the field wants it after sideboarding. The 60
+        most-wanted copies make the main deck and the next 15 the sideboard. Figures are weighted by share.</p>
+      ${sug.warnings.length ? `<ul class="warnings">${sug.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+    </section>
+    <div class="build-grid">
+      <section class="pane">
+        <div class="list-head"><h3>Main deck <span class="count">${mainCount}</span></h3></div>
+        <ul class="card-list">${cardRows('main', 'current_main')}</ul>
+      </section>
+      <section class="pane">
+        <div class="list-head"><h3>Sideboard <span class="count">${sideCount}</span></h3></div>
+        <ul class="card-list">${cardRows('side', 'current_side') || '<li class="muted empty-row">Empty.</li>'}</ul>
+        ${cutNames.length ? `<p class="hint">Cut from your current deck: ${cutNames.map(esc).join(', ')}</p>` : ''}
+      </section>
+    </div>
+    <section class="pane">
+      <div class="pane-head"><h2>By matchup</h2></div>
+      <table class="fit-table">
+        <thead><tr><th>Matchup</th><th>Share</th><th>Game 1</th><th>Boarded</th><th>Swaps</th></tr></thead>
+        <tbody>${fits}</tbody>
+      </table>
+      <p class="hint">Game 1 and Boarded count the target cards you’d be playing. Tap a matchup for its plan.</p>
+    </section>`;
+}
+
+function sheetTarget(id) {
+  const arch = S.view.doc.archetypes.find((a) => a.id === id);
+  if (!arch) return;
+  const current = (arch.target_deck || []).map((e) => `${e.qty} ${e.name}`).join('\n');
+  const fromPlan = S.view.matchups[id]?.base_postboard || '';
+  openSheet({
+    title: `Post-board deck vs ${arch.name}`,
+    wide: true,
+    body: `<p class="muted">The 60 cards you want to play after sideboarding in this matchup.</p>
+      ${fromPlan ? '<div class="btn-row"><button type="button" class="btn small" id="target-from-plan">Start from current deck and plan</button></div>' : ''}
+      ${field('Decklist', `<textarea name="text" id="target-text" rows="14" spellcheck="false" placeholder="4 Lightning Bolt\n4 Goblin Guide\n…">${esc(current)}</textarea>`,
+        'One “qty name” per line. Blank lines between groups are fine.')}
+      <p class="preview" id="target-count"></p>`,
+    submitLabel: 'Save',
+    extraButtons: current ? `<button type="button" class="btn danger" data-act="target-clear" data-id="${esc(id)}">Clear</button>` : '',
+    onSubmit: async (form) => {
+      const res = await op({ op: 'set_target_deck', archetype_id: id, text: form.text.value });
+      if (!res) return false;
+      toast(res.result?.message || 'Saved.');
+      if (res.result?.unparsed?.length) toast(`${res.result.unparsed.length} line(s) not understood: ${res.result.unparsed.slice(0, 3).join('; ')}`, 'warn');
+      return true;
+    },
+  });
+  const form = $('#sheet form');
+  let timer = 0, seq = 0;
+  const count = () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const mine = ++seq;
+      try {
+        const p = await api('POST', '/api/parse-decklist', { text: form.text.value, name: '' });
+        if (mine !== seq) return;
+        // Same rule as the server: a full 60 drops a trailing sideboard.
+        const n = p.main_count >= 60 ? p.main_count : p.main_count + p.side_count;
+        let msg = n === 60 ? '60 cards' : n < 60 ? `${n} cards · ${60 - n} short of 60` : `${n} cards · ${n - 60} over 60`;
+        if (p.main_count >= 60 && p.side_count) msg += ` · the ${p.side_count}-card sideboard is ignored`;
+        if (p.unparsed.length) msg += `\n⚠ ${p.unparsed.length} unparsed line(s): ${p.unparsed.slice(0, 3).join('; ')}`;
+        $('#target-count').textContent = msg;
+      } catch { /* preview only */ }
+    }, 200);
+  };
+  form.text.addEventListener('input', count);
+  $('#target-from-plan')?.addEventListener('click', () => {
+    form.text.value = fromPlan;
+    count();
+  });
+  count();
 }
 
 // ----- report view ---------------------------------------------------------------------------
@@ -713,6 +889,8 @@ async function sheetSettings() {
           (quantities summed per card).</li>
         <li><strong>Deck:</strong> import a Moxfield “MTGO” export (blank line before the sideboard),
           or add, rename and adjust cards one at a time.</li>
+        <li><strong>Build:</strong> give each matchup its share of the field and the 60 cards you want
+          after sideboarding; it suggests the main deck, sideboard and plans that get closest across the field.</li>
         <li><strong>Results:</strong> log matches as games won-lost (2-1, 1-2, 1-1…). Each result is pinned
           to the deck revision it was played with. Deck edits after logging results freeze the old list;
           the revision number advances only when the revised deck is used (a plan edit or a new result).</li>
@@ -1073,6 +1251,31 @@ const actions = {
   },
   'view-rev'(d) { sheetRevision(d.id); },
 
+  'target-edit'(d) { sheetTarget(d.id); },
+  async 'target-clear'(d) {
+    if (await op({ op: 'set_target_deck', archetype_id: d.id, text: '' })) closeSheet();
+  },
+  'fit-toggle'(d) {
+    if (S.openFits.has(d.id)) S.openFits.delete(d.id); else S.openFits.add(d.id);
+    renderMain();
+  },
+  'apply-suggestion'() {
+    const sug = S.view.suggestion;
+    openSheet({
+      title: 'Use the suggested 75?',
+      body: `<p>This replaces your deck with the suggested ${total(sug.main)}-card main deck and
+        ${total(sug.side)}-card sideboard, and the base sideboard plan for ${sug.matchups.length}
+        ${sug.matchups.length === 1 ? 'matchup' : 'matchups'}. On-the-play and on-the-draw changes are kept.</p>
+        <p class="muted">Results you’ve logged keep the decklist they were played with.</p>`,
+      submitLabel: 'Use it',
+      onSubmit: async () => {
+        const res = await op({ op: 'apply_suggestion' });
+        if (res) toast(res.result?.message || 'Deck updated.');
+        return !!res;
+      },
+    });
+  },
+
   'report-mode'(d) {
     S.reportMode = d.mode;
     renderMain();
@@ -1096,6 +1299,19 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     e.target.click();
   }
+});
+
+// Metagame shares save when the field is committed (blur / enter).
+document.addEventListener('change', (e) => {
+  const input = e.target.closest?.('input[data-share]');
+  if (!input) return;
+  const text = input.value.trim();
+  const share = text === '' ? null : Number(text);
+  if (share !== null && !(share >= 0 && share <= 100)) {
+    toast('Enter a share between 0 and 100%.', 'error');
+    return;
+  }
+  op({ op: 'set_meta_share', archetype_id: input.dataset.share, share });
 });
 
 document.addEventListener('toggle', (e) => {

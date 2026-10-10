@@ -84,3 +84,15 @@ def test_validate_plan_balance_and_legality():
     assert result.balanced is True
     assert result.illegal_in == ["Rogue"]
     assert result.ok is False
+
+
+def test_metagame_builder_fields_round_trip():
+    arch = Archetype(
+        name="Control", meta_share=12.5, target_deck=[CardEntry("Mountain", 60)]
+    )
+    d = arch.to_dict()
+    assert d["meta_share"] == 12.5
+    assert d["target_deck"] == [{"name": "Mountain", "qty": 60}]
+    assert Archetype.from_dict(d) == arch
+    plain = Archetype(name="X").to_dict()
+    assert "meta_share" not in plain and "target_deck" not in plain

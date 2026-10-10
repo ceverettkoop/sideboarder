@@ -3,6 +3,7 @@ package sbd
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -40,6 +41,8 @@ type Op struct {
 
 	ResultID string       `json:"result_id,omitempty"`
 	Result   *ResultInput `json:"result,omitempty"`
+
+	Share *float64 `json:"share,omitempty"` // set_meta_share: percent; null clears
 }
 
 // OpResult carries op-specific feedback (e.g. lines an import couldn't parse).
@@ -88,6 +91,20 @@ func Apply(doc *Document, op Op) (OpResult, error) {
 		}
 		doc.Archetypes = kept
 		return OpResult{}, nil
+	case "set_meta_share":
+		arch, err := doc.Archetype(op.ArchetypeID)
+		if err != nil {
+			return OpResult{}, err
+		}
+		if op.Share != nil && (*op.Share < 0 || *op.Share > 100 || math.IsNaN(*op.Share)) {
+			return OpResult{}, errors.New("metagame share must be between 0 and 100%")
+		}
+		arch.MetaShare = op.Share
+		return OpResult{}, nil
+	case "set_target_deck":
+		return setTargetDeck(doc, op)
+	case "apply_suggestion":
+		return applySuggestion(doc)
 	case "plan_add", "plan_remove", "plan_qty":
 		return OpResult{}, planOp(doc, op)
 	case "result_add":
@@ -139,6 +156,61 @@ func importDeck(doc *Document, op Op) (OpResult, error) {
 			parsed.Deck.MainboardCount(), parsed.Deck.SideboardCount()),
 		Unparsed: parsed.Unparsed,
 	}, nil
+}
+
+// setTargetDeck stores the deck wanted after boarding against an archetype.
+// Pasted text may be split by blank lines (e.g. creatures / spells / lands);
+// only a list that already has a full main deck has its sideboard ignored.
+func setTargetDeck(doc *Document, op Op) (OpResult, error) {
+	arch, err := doc.Archetype(op.ArchetypeID)
+	if err != nil {
+		return OpResult{}, err
+	}
+	if strings.TrimSpace(op.Text) == "" {
+		arch.TargetDeck = nil
+		return OpResult{Message: "Post-board deck cleared."}, nil
+	}
+	parsed := ParseDecklist(op.Text, "")
+	entries := parsed.Deck.Mainboard
+	msg := ""
+	if parsed.Deck.MainboardCount() >= MainSize {
+		if n := parsed.Deck.SideboardCount(); n > 0 {
+			msg = fmt.Sprintf(" Ignored the %d-card sideboard.", n)
+		}
+	} else {
+		entries = MergeEntries(parsed.Deck.Mainboard, parsed.Deck.Sideboard)
+	}
+	if len(entries) == 0 {
+		return OpResult{}, errors.New("no cards found in the pasted list")
+	}
+	arch.TargetDeck = entries
+	return OpResult{
+		Message:  fmt.Sprintf("Saved a %d-card post-board deck for %s.%s", TotalQty(entries), arch.Name, msg),
+		Unparsed: parsed.Unparsed,
+	}, nil
+}
+
+// applySuggestion replaces the deck with the suggested 75 and each targeted
+// matchup's base plan with the plan that reaches its post-board deck.
+func applySuggestion(doc *Document) (OpResult, error) {
+	s := Suggest(doc)
+	if !s.Ready {
+		return OpResult{}, errors.New("enter a post-board deck for at least one matchup first")
+	}
+	doc.NoteDeckChange()
+	doc.Deck.Mainboard = s.Main
+	doc.Deck.Sideboard = s.Side
+	for _, fit := range s.Matchups {
+		arch, err := doc.Archetype(fit.ArchetypeID)
+		if err != nil {
+			return OpResult{}, err
+		}
+		arch.Base = fit.Plan
+	}
+	// The plans now use the new list, which makes it a revision in use.
+	doc.CommitDeckRevision()
+	return OpResult{Message: fmt.Sprintf("Deck updated to %d+%d cards with %d sideboard plans.",
+		TotalQty(s.Main), TotalQty(s.Side), len(s.Matchups))}, nil
 }
 
 func deckOp(doc *Document, op Op) error {

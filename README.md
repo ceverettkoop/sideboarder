@@ -95,6 +95,27 @@ On a phone, "Add to Home Screen" gives it an app icon. Differences from the TUI:
 - The card database update downloads MTGJSON's `.gz` file (the TUI uses `.xz`); the
   resulting `cardnames.json` is identical in format.
 
+### Build mode: a 75 from your matchups
+
+The web app's **Build** tab works backwards from the decks you want to play. For each opponent
+archetype, enter its **share of the field** and the **60 cards you want after sideboarding**
+(paste a list, or start from the current deck plus that matchup's plan). It then suggests a
+60-card main deck, a 15-card sideboard, and the sideboard plan for every matchup.
+
+How it chooses: each copy of each card is valued by the share of the field whose post-board deck
+wants at least that many copies (the 3rd Path to Exile is worth 40% if matchups making up 40% of
+the field play 3 or more). The 60 most valuable copies form the main deck and the next 15 the
+sideboard. This minimises the share-weighted number of target cards you are missing, both in
+game 1 (main deck only) and after boarding (main deck plus sideboard), and keeps the 4-copy
+limit because no copy beyond what some target plays has any value. Ties go to the card with the
+higher share-weighted average count.
+
+For each matchup it shows how many target cards you'd have in game 1 and after boarding, how
+many cards you swap, and anything the 75 can't supply. **Use this deck and plans** replaces the
+deck and those matchups' base plans (play/draw changes are kept, and results already logged keep
+the list they were played with). Shares are scaled to the matchups that have a post-board deck,
+so they don't need to add up to 100%; with no shares entered every matchup counts equally.
+
 Run the Go tests with `cd web && go test ./...`.
 
 **Try it without a server:** `web/demo/build.sh` compiles the same server to WebAssembly and
@@ -164,7 +185,9 @@ A document is one JSON file:
       "notes": "",
       "base": {"out": [{"name": "Searing Blaze", "qty": 2}],
                "in":  [{"name": "Smash to Smithereens", "qty": 2}]},
-      "play_override": {"out": [], "in": [{"name": "Roiling Vortex", "qty": 1}]}
+      "play_override": {"out": [], "in": [{"name": "Roiling Vortex", "qty": 1}]},
+      "meta_share": 18.5,
+      "target_deck": [{"name": "Lightning Bolt", "qty": 4}, "…"]
     }
   ],
   "deck_revision": 2,

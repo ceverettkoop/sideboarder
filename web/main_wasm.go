@@ -6,6 +6,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -107,6 +108,43 @@ func seedDemo(store *memStore) {
 			_, _ = sbd.Apply(doc, op)
 		}
 	}
+	// Metagame builder inputs: each matchup's share of the field and the deck
+	// wanted after boarding, written as changes to the current main deck.
+	targets := []struct {
+		name    string
+		share   float64
+		out, in []sbd.CardEntry
+	}{
+		{"Azorius Control", 30, []sbd.CardEntry{card("Searing Blaze", 3), card("Lightning Helix", 1)},
+			[]sbd.CardEntry{card("Roiling Vortex", 3), card("Smash to Smithereens", 1)}},
+		{"Hammer Time", 25, []sbd.CardEntry{card("Lava Spike", 4), card("Skewer the Critics", 2)},
+			[]sbd.CardEntry{card("Smash to Smithereens", 3), card("Path to Exile", 2), card("Sanctifier en-Vec", 1)}},
+		{"Living End", 15, []sbd.CardEntry{card("Searing Blaze", 3), card("Lightning Helix", 2)},
+			[]sbd.CardEntry{card("Rest in Peace", 2), card("Path to Exile", 2), card("Sanctifier en-Vec", 1)}},
+		{"Boros Energy", 20, []sbd.CardEntry{card("Rift Bolt", 4), card("Skewer the Critics", 3)},
+			[]sbd.CardEntry{card("Kor Firewalker", 3), card("Path to Exile", 2), card("Deflecting Palm", 2)}},
+	}
+	for _, tg := range targets {
+		id := ""
+		for _, a := range doc.Archetypes {
+			if a.Name == tg.name {
+				id = a.ID
+			}
+		}
+		if id == "" {
+			res, _ := sbd.Apply(doc, sbd.Op{Op: "add_archetype", Name: tg.name})
+			id = res.Message
+		}
+		share := tg.share
+		deck := sbd.PostboardDeck(doc.Deck, sbd.Plan{Out: tg.out, In: tg.in})
+		var text strings.Builder
+		for _, e := range deck {
+			fmt.Fprintf(&text, "%d %s\n", e.Qty, e.Name)
+		}
+		_, _ = sbd.Apply(doc, sbd.Op{Op: "set_meta_share", ArchetypeID: id, Share: &share})
+		_, _ = sbd.Apply(doc, sbd.Op{Op: "set_target_deck", ArchetypeID: id, Text: text.String()})
+	}
+
 	results := []sbd.ResultInput{
 		{Date: "2026-09-26", Event: "FNM", Archetype: "Hammer Time", PlayDraw: "play", Games: "2-1"},
 		{Date: "2026-09-26", Event: "FNM", Archetype: "Azorius Control", PlayDraw: "draw", Games: "1-2", Notes: "Supreme Verdict on 4 both games"},
@@ -159,3 +197,5 @@ var demoCardNames = []string{
 	"Ghost Quarter", "Thalia, Guardian of Thraben", "Stony Silence", "Celestial Purge",
 	"Lim-Dûl's Vault", "Grafdigger's Cage", "Surgical Extraction", "Spell Pierce",
 }
+
+func card(name string, qty int) sbd.CardEntry { return sbd.CardEntry{Name: name, Qty: qty} }

@@ -1,6 +1,9 @@
 package sbd
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // View is a document plus everything derived from it that the web client
 // displays, so the rules (effective plans, validation, records) live here in
@@ -13,6 +16,7 @@ type View struct {
 	Outcomes   map[string]string        `json:"outcomes"` // result ID -> W/L/D
 	Candidates []string                 `json:"archetype_candidates"`
 	Revisions  map[int]RevisionDeckView `json:"revision_decks"`
+	Suggestion Suggestion               `json:"suggestion"`
 }
 
 // EffectiveView is the effective plan for one side of the coin flip.
@@ -25,6 +29,9 @@ type EffectiveView struct {
 type MatchupView struct {
 	Play EffectiveView `json:"play"`
 	Draw EffectiveView `json:"draw"`
+	// The current main deck after the base plan, as decklist text: a
+	// starting point for the matchup's post-board target.
+	BasePostboard string `json:"base_postboard"`
 }
 
 // RecordView is an ArchetypeRecord with its display strings.
@@ -66,8 +73,9 @@ func BuildView(doc *Document) View {
 	for _, a := range doc.Archetypes {
 		play, draw := a.Effective(true), a.Effective(false)
 		v.Matchups[a.ID] = MatchupView{
-			Play: EffectiveView{Plan: play.normalized(), Validation: ValidatePlan(play, doc.Deck)},
-			Draw: EffectiveView{Plan: draw.normalized(), Validation: ValidatePlan(draw, doc.Deck)},
+			Play:          EffectiveView{Plan: play.normalized(), Validation: ValidatePlan(play, doc.Deck)},
+			Draw:          EffectiveView{Plan: draw.normalized(), Validation: ValidatePlan(draw, doc.Deck)},
+			BasePostboard: listText(PostboardDeck(doc.Deck, a.Base)),
 		}
 	}
 	for _, r := range BuildRecords(doc.Results) {
@@ -86,6 +94,7 @@ func BuildView(doc *Document) View {
 		}
 	}
 	v.Candidates = ArchetypeCandidates(doc)
+	v.Suggestion = Suggest(doc)
 	return v
 }
 
@@ -108,4 +117,21 @@ func ArchetypeCandidates(doc *Document) []string {
 		add(r.Archetype)
 	}
 	return names
+}
+
+// PostboardDeck is the main deck after a plan: OUT cards removed, IN cards added.
+func PostboardDeck(deck Deck, plan Plan) []CardEntry {
+	out := make([]CardEntry, len(plan.Out))
+	for i, e := range plan.Out {
+		out[i] = CardEntry{Name: e.Name, Qty: -e.Qty}
+	}
+	return MergeEntries(deck.Mainboard, out, plan.In)
+}
+
+func listText(entries []CardEntry) string {
+	lines := make([]string, len(entries))
+	for i, e := range entries {
+		lines[i] = fmt.Sprintf("%d %s", e.Qty, e.Name)
+	}
+	return strings.Join(lines, "\n")
 }

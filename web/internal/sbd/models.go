@@ -110,6 +110,10 @@ type Archetype struct {
 	Base         Plan   `json:"base"`
 	PlayOverride *Plan  `json:"play_override,omitempty"`
 	DrawOverride *Plan  `json:"draw_override,omitempty"`
+	// Metagame builder inputs: the archetype's share of the field (percent)
+	// and the 60-card deck wanted after sideboarding against it.
+	MetaShare  *float64    `json:"meta_share,omitempty"`
+	TargetDeck []CardEntry `json:"target_deck,omitempty"`
 }
 
 // NewArchetype returns an archetype with a fresh ID and an empty base plan.

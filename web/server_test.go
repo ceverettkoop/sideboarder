@@ -239,3 +239,26 @@ func TestMemStoreServer(t *testing.T) {
 		t.Fatalf("cards: %s", body)
 	}
 }
+
+func TestBuilderOverHTTP(t *testing.T) {
+	ts := newTestServer(t)
+	ts.do("POST", "/api/files", map[string]string{"deck_name": "b"})
+	ops := "/api/files/b.sbd.json/ops"
+	_, res := ts.do("POST", ops, map[string]any{"op": "add_archetype", "name": "Control"})
+	id := res["result"].(map[string]any)["message"].(string)
+	ts.do("POST", ops, map[string]any{"op": "set_meta_share", "archetype_id": id, "share": 25})
+	code, res := ts.do("POST", ops, map[string]any{"op": "set_target_deck", "archetype_id": id, "text": "56 Mountain\n4 Lightning Bolt"})
+	sug := res["view"].(map[string]any)["suggestion"].(map[string]any)
+	if code != 200 || sug["ready"] != true || len(sug["main"].([]any)) != 2 {
+		t.Fatalf("suggestion: %d %v", code, sug)
+	}
+	// A JSON null clears the share.
+	_, res = ts.do("POST", ops, map[string]any{"op": "set_meta_share", "archetype_id": id, "share": nil})
+	arch := res["view"].(map[string]any)["doc"].(map[string]any)["archetypes"].([]any)[0].(map[string]any)
+	if _, ok := arch["meta_share"]; ok {
+		t.Fatalf("share not cleared: %v", arch)
+	}
+	if code, res = ts.do("POST", ops, map[string]any{"op": "apply_suggestion"}); code != 200 {
+		t.Fatalf("apply: %d %v", code, res)
+	}
+}

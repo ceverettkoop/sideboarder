@@ -95,7 +95,28 @@ func archetypeFromDict(data dict) Archetype {
 		Base:         planFromDict(get(data, "base", nil)),
 		PlayOverride: optionalPlan(data, "play_override"),
 		DrawOverride: optionalPlan(data, "draw_override"),
+		MetaShare:    optionalFloat(data, "meta_share"),
+		TargetDeck:   optionalEntries(data, "target_deck"),
 	}
+}
+
+func optionalFloat(data dict, key string) *float64 {
+	v := get(data, key, nil)
+	if v == nil {
+		return nil
+	}
+	f := pyFloat(v)
+	return &f
+}
+
+// optionalEntries is nil (not an empty list) when the key is missing or empty,
+// so documents round-trip without gaining an empty "target_deck".
+func optionalEntries(data dict, key string) []CardEntry {
+	entries := entriesFromList(get(data, key, nil))
+	if len(entries) == 0 {
+		return nil
+	}
+	return entries
 }
 
 func resultFromDict(data dict) MatchResult {
@@ -234,6 +255,25 @@ func pyStr(v any) string {
 	}
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+func pyFloat(v any) float64 {
+	switch x := v.(type) {
+	case float64:
+		return x
+	case bool:
+		if x {
+			return 1
+		}
+		return 0
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(x), 64)
+		if err != nil {
+			panic(decodeError{fmt.Errorf("invalid number %q", x)})
+		}
+		return f
+	}
+	panic(decodeError{fmt.Errorf("expected a number, got %T", v)})
 }
 
 func pyInt(v any) int {

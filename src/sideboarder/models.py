@@ -103,6 +103,11 @@ class Archetype:
     base: Plan = field(default_factory=Plan)
     play_override: Plan | None = None
     draw_override: Plan | None = None
+    # Metagame builder inputs (edited in the web app; kept here so saving from
+    # the TUI doesn't drop them): share of the field in percent, and the
+    # 60-card deck wanted after sideboarding against this archetype.
+    meta_share: float | None = None
+    target_deck: list[CardEntry] = field(default_factory=list)
 
     def effective(self, on_play: bool) -> Plan:
         """The plan that actually applies, given play (True) or draw (False)."""
@@ -120,6 +125,10 @@ class Archetype:
             data["play_override"] = self.play_override.to_dict()
         if self.draw_override is not None:
             data["draw_override"] = self.draw_override.to_dict()
+        if self.meta_share is not None:
+            data["meta_share"] = self.meta_share
+        if self.target_deck:
+            data["target_deck"] = _entries_to_list(self.target_deck)
         return data
 
     @classmethod
@@ -135,6 +144,10 @@ class Archetype:
             draw_override=(
                 Plan.from_dict(data["draw_override"]) if data.get("draw_override") else None
             ),
+            meta_share=(
+                float(data["meta_share"]) if data.get("meta_share") is not None else None
+            ),
+            target_deck=_entries_from_list(data.get("target_deck")),
         )
 
 
