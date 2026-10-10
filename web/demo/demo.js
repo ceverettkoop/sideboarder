@@ -3,7 +3,7 @@
 // kept in this browser's localStorage.
 'use strict';
 (() => {
-  const KEY = 'sideboarder.demo.docs';
+  const KEY = 'sideboarder.demo.v2.docs'; // bump when the sample changes
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch { saved = {}; }
   window.sideboarderSaved = saved;
